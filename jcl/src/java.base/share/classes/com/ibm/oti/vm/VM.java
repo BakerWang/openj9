@@ -2,7 +2,7 @@
 
 package com.ibm.oti.vm;
 /*******************************************************************************
- * Copyright (c) 1998, 2017 IBM Corp. and others
+ * Copyright (c) 1998, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -20,7 +20,7 @@ package com.ibm.oti.vm;
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 import com.ibm.oti.util.Msg;
@@ -68,10 +68,13 @@ public final class VM {
 	public static final int J9_GC_POLICY_GENCON;
 	public static final int J9_GC_POLICY_BALANCED;
 	public static final int J9_GC_POLICY_METRONOME;
+	public static final int J9_GC_POLICY_NOGC;
 	
 	public static final int J9CLASS_INSTANCESIZE_OFFSET;
 	public static final int J9CLASS_INSTANCE_DESCRIPTION_OFFSET;
 	public static final int J9CLASS_LOCK_OFFSET_OFFSET;
+	public static final int J9CLASS_LOCK_RESERVATION_HISTORY_RESERVED_COUNTER_OFFSET;
+	public static final int J9CLASS_LOCK_RESERVATION_HISTORY_CANCEL_COUNTER_OFFSET;
 	public static final int J9CLASS_INITIALIZE_STATUS_OFFSET;
 	public static final int J9CLASS_CLASS_DEPTH_AND_FLAGS_OFFSET;
 	public static final int J9CLASS_SUPERCLASSES_OFFSET;
@@ -79,12 +82,17 @@ public final class VM {
 	public static final int J9CLASS_SIZE;
 	
 	public static final int J9_JAVA_CLASS_DEPTH_MASK;
+	public static final int J9_JAVA_CLASS_MASK;
 	
 	public static final int J9ROMCLASS_MODIFIERS_OFFSET;
 	
 	public static final int ADDRESS_SIZE;
+
+	public static final int J9_ACC_CLASS_ARRAY;
 	
 	public static final int J9_ACC_CLASS_INTERNAL_PRIMITIVE_TYPE;
+
+	public static final int J9CLASS_INIT_SUCCEEDED;
 
 	/* Valid types for J9_JIT_STRING_DEDUP_POLICY are:
 	 *  - J9_JIT_STRING_DEDUP_POLICY_DISABLED
@@ -103,6 +111,23 @@ public final class VM {
 	
 	public static final int OBJECT_HEADER_HAS_BEEN_MOVED_IN_CLASS;
 	
+	public static final boolean IS_BIG_ENDIAN;
+	
+	public static final int J9_CLASSLOADER_TYPE_OTHERS;
+	public static final int J9_CLASSLOADER_TYPE_BOOT;
+	public static final int J9_CLASSLOADER_TYPE_PLATFORM;
+	
+	/* Lock reservation */
+	public static final int J9CLASS_RESERVABLE_LOCK_WORD_INIT;
+	public static final int OBJECT_HEADER_LOCK_RESERVED;
+	public static final int OBJECT_HEADER_LOCK_LEARNING;
+
+	public static final int GLR_ENABLE_GLOBAL_LOCK_RESERVATION;
+	public static final int GLR_RESERVED_ABSOLUTE_THRESHOLD;
+	public static final int GLR_MINIMUM_RESERVED_RATIO;
+	public static final int GLR_CANCEL_ABSOLUTE_THRESHOLD;
+	public static final int GLR_MINIMUM_LEARNING_RATIO;
+
 	private static String[] cachedVMArgs;
 	/*[PR CMVC 189091] Perf: EnumSet.allOf() is slow */
 	/*[PR CMVC 191554] Provide access to ClassLoader methods to improve performance */
@@ -139,10 +164,13 @@ public final class VM {
 		J9_GC_POLICY_GENCON = 0;
 		J9_GC_POLICY_BALANCED = 0;
 		J9_GC_POLICY_METRONOME = 0;
+		J9_GC_POLICY_NOGC = 0;
 		
 		J9CLASS_INSTANCESIZE_OFFSET = 0;
 		J9CLASS_INSTANCE_DESCRIPTION_OFFSET = 0;
 		J9CLASS_LOCK_OFFSET_OFFSET = 0;
+		J9CLASS_LOCK_RESERVATION_HISTORY_RESERVED_COUNTER_OFFSET = 0;
+		J9CLASS_LOCK_RESERVATION_HISTORY_CANCEL_COUNTER_OFFSET = 0;
 		J9CLASS_INITIALIZE_STATUS_OFFSET = 0;
 		J9CLASS_CLASS_DEPTH_AND_FLAGS_OFFSET = 0;
 		J9CLASS_SUPERCLASSES_OFFSET = 0;
@@ -150,18 +178,37 @@ public final class VM {
 		J9CLASS_SIZE = 0;
 		
 		J9_JAVA_CLASS_DEPTH_MASK = 0;
+		J9_JAVA_CLASS_MASK = 0;
 		
 		J9ROMCLASS_MODIFIERS_OFFSET = 0;
 		
 		ADDRESS_SIZE = 0;
 		
 		J9_ACC_CLASS_INTERNAL_PRIMITIVE_TYPE = 0;
+		J9_ACC_CLASS_ARRAY = 0;
+		J9CLASS_INIT_SUCCEEDED = 0;
 		
 		J9_JIT_STRING_DEDUP_POLICY = 0;
 		
 		J9_STRING_COMPRESSION_ENABLED = false;
 		
 		OBJECT_HEADER_HAS_BEEN_MOVED_IN_CLASS = 0;
+		
+		IS_BIG_ENDIAN = false;
+
+		J9_CLASSLOADER_TYPE_OTHERS = 0;
+		J9_CLASSLOADER_TYPE_BOOT = 0;
+		J9_CLASSLOADER_TYPE_PLATFORM = 0;
+
+		J9CLASS_RESERVABLE_LOCK_WORD_INIT = 0;
+		OBJECT_HEADER_LOCK_RESERVED = 0;
+		OBJECT_HEADER_LOCK_LEARNING = 0;
+
+		GLR_ENABLE_GLOBAL_LOCK_RESERVATION = 0;
+		GLR_RESERVED_ABSOLUTE_THRESHOLD = 0;
+		GLR_MINIMUM_RESERVED_RATIO = 0;
+		GLR_CANCEL_ABSOLUTE_THRESHOLD = 0;
+		GLR_MINIMUM_LEARNING_RATIO = 0;
 }
 /**
  * Prevents this class from being instantiated.
@@ -208,13 +255,16 @@ static final native ClassLoader getStackClassLoader(int depth);
 /**
  * Initialize the classloader.
  *
- * @param 		loader ClassLoader
- *					the ClassLoader instance
- * @param 		bootLoader boolean 
- *					true for the bootstrap class loader
- * @param parallelCapable true if the loader has registered as parallel capable
+ * @param loader
+ *            ClassLoader the ClassLoader instance
+ * @param loaderType
+ *            J9_CLASSLOADER_TYPE_BOOT     - bootstrap classloader 
+ *            J9_CLASSLOADER_TYPE_PLATFORM - platform classloader 
+ *            J9_CLASSLOADER_TYPE_OTHERS   - other classloader
+ * @param parallelCapable
+ *            true if the loader has registered as parallel capable
  */
-public final static native void initializeClassLoader(ClassLoader loader, boolean bootLoader, boolean parallelCapable);
+public final static native void initializeClassLoader(ClassLoader loader, int loaderType, boolean parallelCapable);
 
 public final static native long getProcessId(); 
 public final static native long getUid(); 
@@ -225,23 +275,6 @@ public final static native long getUid();
  * @return	true if the specified ClassLoader is the bootstrap ClassLoader
  */
 static private final native boolean isBootstrapClassLoader(ClassLoader loader); 
-
-/*[IF Sidecar19-SE]*/
-/**
- * Native used to find and load a class in a module using the VM. 
- * If it fails to find the class or any exception occurs in finding the class then it returns null. 
- *
- * @return 		java.lang.Class
- *					the class or null.
- * @param		moduleName String
- * 					the name of the module from which to load the class
- * @param 		className String
- *					the name of the class to search for.
- * @param		classLoader
- *					the classloader to do the work
- */
-static native Class findClassInModuleOrNull(String moduleName, String className, ClassLoader classLoader);
-/*[ENDIF]*/
 
 /**
  * Ensures that the caller of the method where this check is made is a bootstrap class. 

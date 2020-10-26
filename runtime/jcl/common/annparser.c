@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1998, 2017 IBM Corp. and others
+ * Copyright (c) 1998, 2018 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "jni.h"
@@ -43,14 +43,14 @@ Java_com_ibm_oti_reflect_AnnotationParser_getAnnotationsData__Ljava_lang_reflect
 	enterVMFromJNI(vmThread);
 	fieldObject = J9_JNI_UNWRAP_REFERENCE(jlrField);
 	if (NULL != fieldObject) {
-		J9JNIFieldID *fieldID = vmThread->javaVM->reflectFunctions.idFromFieldObject(vmThread, fieldObject);
+		J9JNIFieldID *fieldID = vmThread->javaVM->reflectFunctions.idFromFieldObject(vmThread, NULL, fieldObject);
 
 		j9object_t annotationsData = getFieldAnnotationData(vmThread, fieldID->declaringClass, fieldID);
 		if (NULL != annotationsData) {
 			result = vmThread->javaVM->internalVMFunctions->j9jni_createLocalRef(env, annotationsData);
 		}
 	}
-	releaseVMAccess(vmThread);
+	exitVMToJNI(vmThread);
 	return result;
 }
 
@@ -93,7 +93,7 @@ getExecutableAnnotationDataHelper(JNIEnv *env, jobject jlrMethod, METHOD_OBJECT_
 			result = vmThread->javaVM->internalVMFunctions->j9jni_createLocalRef(env, annotationsData);
 		}
 	}
-	releaseVMAccess(vmThread);
+	exitVMToJNI(vmThread);
 	return result;
 }
 

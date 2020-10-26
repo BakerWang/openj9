@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /*
@@ -73,8 +73,6 @@ extern int j9str_runTests(struct J9PortLibrary *portLibrary); /** @see j9ttyTest
 extern int j9time_runTests(struct J9PortLibrary *portLibrary); /** @see j9timeTest.c::j9time_runTests */
 extern int j9tty_runTests(struct J9PortLibrary *portLibrary); /** @see j9ttyTest.c::j9tty_runTests */
 extern int j9tty_runExtendedTests(struct J9PortLibrary *portLibrary); /** @see j9ttyTest.c::j9tty_runTests */
-extern int j9sig_runTests(struct J9PortLibrary *portLibrary, char* exeName, char* argument); /** @see j9signalTest.c::j9sig_runTests */
-extern int j9sig_ext_runTests(struct J9PortLibrary *portLibrary, const char* exeName); /** @see j9signalExtendedTest.c::j9sig_ext_runTests */
 extern int si_test(struct J9PortLibrary *portLibrary, const char*);
 extern int socket_test(struct J9PortLibrary *portLibrary,BOOLEAN isClient,char* serverName);
 extern int j9shmem_runTests(struct J9PortLibrary *portLibrary, char* argv0, char* shsem_child);
@@ -221,7 +219,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void *arg)
 	BOOLEAN isChild = 0;
 	BOOLEAN shsem_child = 0;
 	BOOLEAN negative = FALSE;
-	char serverName[99]="";
 	char testName[99]="";
 	char *hypervisor = NULL;
 	char *hvOptions = NULL;
@@ -242,8 +239,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void *arg)
 	for (i=1; i<argc; i++){
 		if (0 == strcmp(argv[i],"-client")) {
 			isClient=1;
-		} else if (startsWith(argv[i],"-host:")) {
-			strcpy(serverName,&argv[i][6]);
 		} else if (0 != strstr(argv[i],"-child_")) {
 			isChild=1;
 			strcpy(testName, &argv[i][7]);
@@ -294,126 +289,114 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void *arg)
 			return j9mmap_runTests(PORTLIB, argv[0], testName);
 		} else if(startsWith(testName,"j9process")) {
 			return j9process_runTests(PORTLIB, argv[0], testName);
-		} else if(startsWith(testName,"j9sig")) {
-			return j9sig_runTests(PORTLIB, argv[0], testName);
 		}
 	}
 
 	rc = 0;
-	if (serverName[0]) {
-		socket_test(PORTLIB,isClient,serverName);
-	} else {
-		/* If nothing specified, then run all tests */
-		if (0 == areasToTest) {
-			areasToTest = J9PORT_TEST_ALL;
-		}
+	/* If nothing specified, then run all tests */
+	if (0 == areasToTest) {
+		areasToTest = J9PORT_TEST_ALL;
+	}
 
-		if (J9PORT_TEST_J9MEM == (areasToTest & J9PORT_TEST_J9MEM)) {
-			rc |= j9mem_runTests(PORTLIB, randomSeed);
-		}
-		if (J9PORT_TEST_J9HEAP == (areasToTest & J9PORT_TEST_J9HEAP)) {
-			rc |= j9heap_runTests(PORTLIB, randomSeed);
-		}
-		if (J9PORT_TEST_J9TTY ==(areasToTest & J9PORT_TEST_J9TTY)) {
-			rc |= j9tty_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9TTY_EXTENDED ==(areasToTest & J9PORT_TEST_J9TTY_EXTENDED)) {
-			rc |= j9tty_runExtendedTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9ERROR ==(areasToTest & J9PORT_TEST_J9ERROR)) {
-			rc |= j9error_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9PORT == (areasToTest & J9PORT_TEST_J9PORT)) {
-			rc |= j9port_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9FILE ==(areasToTest & J9PORT_TEST_J9FILE)) {
-			rc |= j9file_runTests(PORTLIB, argv[0], NULL, FALSE);
-		}
+	if (J9PORT_TEST_J9MEM == (areasToTest & J9PORT_TEST_J9MEM)) {
+		rc |= j9mem_runTests(PORTLIB, randomSeed);
+	}
+	if (J9PORT_TEST_J9HEAP == (areasToTest & J9PORT_TEST_J9HEAP)) {
+		rc |= j9heap_runTests(PORTLIB, randomSeed);
+	}
+	if (J9PORT_TEST_J9TTY ==(areasToTest & J9PORT_TEST_J9TTY)) {
+		rc |= j9tty_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9TTY_EXTENDED ==(areasToTest & J9PORT_TEST_J9TTY_EXTENDED)) {
+		rc |= j9tty_runExtendedTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9ERROR ==(areasToTest & J9PORT_TEST_J9ERROR)) {
+		rc |= j9error_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9PORT == (areasToTest & J9PORT_TEST_J9PORT)) {
+		rc |= j9port_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9FILE ==(areasToTest & J9PORT_TEST_J9FILE)) {
+		rc |= j9file_runTests(PORTLIB, argv[0], NULL, FALSE);
+	}
 #if defined (WIN32) | defined (WIN64)
-		if (J9PORT_TEST_J9FILE_BLOCKINGASYNC == (areasToTest & J9PORT_TEST_J9FILE_BLOCKINGASYNC)) {
-			rc |= j9file_runTests(PORTLIB, argv[0], NULL, TRUE);
-		}
+	if (J9PORT_TEST_J9FILE_BLOCKINGASYNC == (areasToTest & J9PORT_TEST_J9FILE_BLOCKINGASYNC)) {
+		rc |= j9file_runTests(PORTLIB, argv[0], NULL, TRUE);
+	}
 #endif
-		if (J9PORT_TEST_J9STR == (areasToTest & J9PORT_TEST_J9STR)) {
-			rc |= j9str_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9TIME == (areasToTest & J9PORT_TEST_J9TIME)){
-			rc |= j9time_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9SIGNAL == (areasToTest & J9PORT_TEST_J9SIGNAL)) {
-			rc |= j9sig_runTests(PORTLIB, argv[0], NULL);
-		}
-		if (J9PORT_TEST_J9SIG_EXTENDED == (areasToTest & J9PORT_TEST_J9SIG_EXTENDED)) {
-			rc |= j9sig_ext_runTests(PORTLIB, argv[0]);
-		}
-		if (J9PORT_TEST_J9SYSINFO ==(areasToTest & J9PORT_TEST_J9SYSINFO)) {
-			rc |= j9sysinfo_runTests(PORTLIB, argv[0]);
-		}
+	if (J9PORT_TEST_J9STR == (areasToTest & J9PORT_TEST_J9STR)) {
+		rc |= j9str_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9TIME == (areasToTest & J9PORT_TEST_J9TIME)){
+		rc |= j9time_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9SYSINFO ==(areasToTest & J9PORT_TEST_J9SYSINFO)) {
+		rc |= j9sysinfo_runTests(PORTLIB, argv[0]);
+	}
 
-		/* Shared semaphore and shared memory tests only works with J2SE platforms*/
+	/* Shared semaphore and shared memory tests only works with J2SE platforms*/
 #if defined(LINUX) | defined (J9ZOS390) | defined (AIXPPC) | defined (WIN32)
-		if (TRUE == shouldRunSharedClassesTests()) {
-			if (J9PORT_TEST_J9SHMEM == (areasToTest & J9PORT_TEST_J9SHMEM)) {
-				rc |= j9shmem_runTests(PORTLIB, argv[0], NULL);
-			}
-			if (J9PORT_TEST_J9SHSEM == (areasToTest & J9PORT_TEST_J9SHSEM)) {
-				rc |= j9shsem_runTests(PORTLIB, argv[0], NULL);
-			}
-			if (J9PORT_TEST_J9SHSEM_DEPRECATED == (areasToTest & J9PORT_TEST_J9SHSEM_DEPRECATED)) {
-				rc |= j9shsem_deprecated_runTests(PORTLIB, argv[0], NULL);
-			}
-		} else {
-			j9tty_printf(PORTLIB,"\nINFO SKIPPING TESTS: The following tests will not be run if the current userid is 'root': \n\t" \
-				"j9shmem_runTests(), j9shsem_runTests(), and j9shsem_deprecated_runTests().\n\n");
+	if (TRUE == shouldRunSharedClassesTests()) {
+		if (J9PORT_TEST_J9SHMEM == (areasToTest & J9PORT_TEST_J9SHMEM)) {
+			rc |= j9shmem_runTests(PORTLIB, argv[0], NULL);
 		}
+		if (J9PORT_TEST_J9SHSEM == (areasToTest & J9PORT_TEST_J9SHSEM)) {
+			rc |= j9shsem_runTests(PORTLIB, argv[0], NULL);
+		}
+		if (J9PORT_TEST_J9SHSEM_DEPRECATED == (areasToTest & J9PORT_TEST_J9SHSEM_DEPRECATED)) {
+			rc |= j9shsem_deprecated_runTests(PORTLIB, argv[0], NULL);
+		}
+	} else {
+		j9tty_printf(PORTLIB,"\nINFO SKIPPING TESTS: The following tests will not be run if the current userid is 'root': \n\t" \
+			"j9shmem_runTests(), j9shsem_runTests(), and j9shsem_deprecated_runTests().\n\n");
+	}
 #endif /* LINUX | J9ZOS390 | AIXPPC | WIN32 */
 
-		if (J9PORT_TEST_J9MMAP ==(areasToTest & J9PORT_TEST_J9MMAP)) {
-			rc |= j9mmap_runTests(PORTLIB, argv[0], NULL);
-		}
-		if (J9PORT_TEST_J9VMEM ==(areasToTest & J9PORT_TEST_J9VMEM)) {
-			if (NULL != disclaimPerfTestArg){
-				/* disclaimPerfTestArg is the string after the ':' from +/-disclaimPerfTest:<pageSize>,<byteAmount>,<totalMemory>[,<numIterations>]
-				 * shouldDisclaim is set from the +/- prefix, numIterations is optional and defaults to 50 */
-				rc |= j9vmem_disclaimPerfTests(PORTLIB, disclaimPerfTestArg, shouldDisclaim);
-			} else {
-				rc |= j9vmem_runTests(PORTLIB);
-			}
-		}
-		if (J9PORT_TEST_J9DUMP == (areasToTest & J9PORT_TEST_J9DUMP)) {
-			rc |= j9dump_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9SOCK == (areasToTest & J9PORT_TEST_J9SOCK)) {
-			rc |= j9sock_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9PROCESS == (areasToTest & J9PORT_TEST_J9PROCESS)) {
-			rc |= j9process_runTests(PORTLIB, argv[0], NULL);
-		}
-		if (J9PORT_TEST_J9SL == (areasToTest & J9PORT_TEST_J9SL)) {
-			rc |= j9sl_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9NLS == (areasToTest & J9PORT_TEST_J9NLS)) {
-			rc |= j9nls_runTests(PORTLIB);
-		}
-		/* j9hypervisor Tests are run only when specified by -include */
-		if(J9PORT_TEST_J9HYPERVISOR == (areasToTest & J9PORT_TEST_J9HYPERVISOR)) {
-			rc |= j9hypervisor_runTests(PORTLIB, hypervisor, hvOptions, negative);
-		}
-		if (J9PORT_TEST_NUMCPUS == (areasToTest & J9PORT_TEST_NUMCPUS)) {
-			rc |= j9sysinfo_numcpus_runTests(PORTLIB, boundTest);
-		}
-		if (J9PORT_TEST_INSTRUMENTATION == (areasToTest & J9PORT_TEST_INSTRUMENTATION)) {
-			rc |= j9ri_runTests(PORTLIB);
-		}
-		if (J9PORT_TEST_J9CUDA == (areasToTest & J9PORT_TEST_J9CUDA)) {
-			rc |= j9cuda_runTests(PORTLIB);
-		}
-
-		if (rc) {
-			dumpTestFailuresToConsole(portLibrary);
+	if (J9PORT_TEST_J9MMAP ==(areasToTest & J9PORT_TEST_J9MMAP)) {
+		rc |= j9mmap_runTests(PORTLIB, argv[0], NULL);
+	}
+	if (J9PORT_TEST_J9VMEM ==(areasToTest & J9PORT_TEST_J9VMEM)) {
+		if (NULL != disclaimPerfTestArg){
+			/* disclaimPerfTestArg is the string after the ':' from +/-disclaimPerfTest:<pageSize>,<byteAmount>,<totalMemory>[,<numIterations>]
+			 * shouldDisclaim is set from the +/- prefix, numIterations is optional and defaults to 50 */
+			rc |= j9vmem_disclaimPerfTests(PORTLIB, disclaimPerfTestArg, shouldDisclaim);
 		} else {
-			j9tty_printf(PORTLIB,"\nALL TESTS COMPLETED AND PASSED\n");
+			rc |= j9vmem_runTests(PORTLIB);
 		}
+	}
+	if (J9PORT_TEST_J9DUMP == (areasToTest & J9PORT_TEST_J9DUMP)) {
+		rc |= j9dump_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9SOCK == (areasToTest & J9PORT_TEST_J9SOCK)) {
+		rc |= j9sock_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9PROCESS == (areasToTest & J9PORT_TEST_J9PROCESS)) {
+		rc |= j9process_runTests(PORTLIB, argv[0], NULL);
+	}
+	if (J9PORT_TEST_J9SL == (areasToTest & J9PORT_TEST_J9SL)) {
+		rc |= j9sl_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9NLS == (areasToTest & J9PORT_TEST_J9NLS)) {
+		rc |= j9nls_runTests(PORTLIB);
+	}
+	/* j9hypervisor Tests are run only when specified by -include */
+	if(J9PORT_TEST_J9HYPERVISOR == (areasToTest & J9PORT_TEST_J9HYPERVISOR)) {
+		rc |= j9hypervisor_runTests(PORTLIB, hypervisor, hvOptions, negative);
+	}
+	if (J9PORT_TEST_NUMCPUS == (areasToTest & J9PORT_TEST_NUMCPUS)) {
+		rc |= j9sysinfo_numcpus_runTests(PORTLIB, boundTest);
+	}
+	if (J9PORT_TEST_INSTRUMENTATION == (areasToTest & J9PORT_TEST_INSTRUMENTATION)) {
+		rc |= j9ri_runTests(PORTLIB);
+	}
+	if (J9PORT_TEST_J9CUDA == (areasToTest & J9PORT_TEST_J9CUDA)) {
+		rc |= j9cuda_runTests(PORTLIB);
+	}
+
+	if (rc) {
+		dumpTestFailuresToConsole(portLibrary);
+	} else {
+		j9tty_printf(PORTLIB,"\nALL TESTS COMPLETED AND PASSED\n");
 	}
 	return 0;
 }

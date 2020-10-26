@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar16]*/
+/*[INCLUDE-IF Sidecar18-SE]*/
 /*******************************************************************************
- * Copyright (c) 1998, 2017 IBM Corp. and others
+ * Copyright (c) 1998, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +18,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.security;
 
@@ -28,6 +28,10 @@ import java.io.StringReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.ArrayList;
+/*[IF Sidecar19-SE]*/
+import sun.security.util.FilePermCompat;
+/*[ENDIF] Sidecar19-SE*/
+import sun.security.util.SecurityConstants;
 
 /**
  * An AccessControlContext encapsulates the information which is needed
@@ -74,11 +78,6 @@ public final class AccessControlContext {
 	Permission[] limitedPerms; // the limited permissions when isLimitedContext is true
 	AccessControlContext nextStackAcc; // AccessControlContext in next call stack when isLimitedContext is true
 	private int debugHasCodebase; // Set to the value of DEBUG_UNINITIALIZED_HASCODEBASE be default. Cache the result of hasDebugCodeBase()
-
-	private static final SecurityPermission createAccessControlContext =
-		new SecurityPermission("createAccessControlContext"); //$NON-NLS-1$
-	private static final SecurityPermission getDomainCombiner =
-		new SecurityPermission("getDomainCombiner"); //$NON-NLS-1$
 
 	static final int DEBUG_ACCESS = 1;
 	static final int DEBUG_ACCESS_STACK = 2;
@@ -379,10 +378,11 @@ AccessControlContext(AccessControlContext acc, DomainCombiner combiner, boolean 
 	if (!preauthorized) {
 		SecurityManager security = System.getSecurityManager();
 		if (null != security) {
-			security.checkPermission(createAccessControlContext);
+			security.checkPermission(SecurityConstants.CREATE_ACC_PERMISSION);
 			/*[PR JAZZ 78139] java.security.AccessController.checkPermission invokes untrusted DomainCombiner.combine method */
 		}
 	}
+	// only AccessControlContext with STATE_AUTHORIZED authorizeState could have non-null domainCombiner
 	this.authorizeState = STATE_AUTHORIZED;
 	this.context = acc.context;
 	this.domainCombiner = combiner;
@@ -521,7 +521,11 @@ static int checkPermWithCachedPDsImplied(Permission perm, Object[] toCheck, Acce
 					}
 				}
 			}
+			/*[IF Sidecar19-SE]*/
+			if (!((ProtectionDomain) domain).impliesWithAltFilePerm(perm)) {
+			/*[ELSE]*/
 			if (!((ProtectionDomain) domain).implies(perm)) {
+			/*[ENDIF] Sidecar19-SE*/
 				return i; // NOT implied
 			}
 		}
@@ -578,6 +582,9 @@ static boolean checkPermWithCachedPermImplied(Permission perm, Permission[] perm
 					}
 				}
 			}
+			/*[IF Sidecar19-SE]*/
+			permsLimited[j] = FilePermCompat.newPermPlusAltPath(permsLimited[j]);
+			/*[ENDIF] Sidecar19-SE*/
 			if (!notImplied && permsLimited[j].implies(perm)) {
 				success = true; // just implied
 				if (null != cacheChecked) {
@@ -601,6 +608,7 @@ static boolean checkPermWithCachedPermImplied(Permission perm, Permission[] perm
  *  ProtectionDomain[] pdsImplied, Permission[] permsImplied, Permission[] permsNotImplied
  *
  * @param perm the permission to be checked
+ * @param activeDC the DomainCombiner to be invoked
  * @param accCurrent the current AccessControlContext to be checked
  * @param debug debug flags
  * @param pdsContext the current context to be checked
@@ -615,6 +623,7 @@ static boolean checkPermWithCachedPermImplied(Permission perm, Permission[] perm
  */
 static boolean checkPermissionWithCache(
 		Permission perm,
+		DomainCombiner activeDC,
 		Object[] pdsContext,
 		int debug,
 		AccessControlContext accCurrent,
@@ -654,15 +663,27 @@ static boolean checkPermissionWithCache(
 	if (null != accCurrent
 		&& (null != accCurrent.context || null != accCurrent.doPrivilegedAcc || null != accCurrent.limitedPerms || null != accCurrent.nextStackAcc)
 	) {
+		ProtectionDomain[] pdCombined;
+		if (activeDC == null) {
+			pdCombined = accCurrent.context;
+		} else {
+			pdCombined = activeDC.combine((ProtectionDomain[])pdsContext, accCurrent.context);
+		}
 		// accCurrent check either throwing a security exception (denied) or continue checking (the return value doesn't matter)
-		checkPermissionWithCache(perm, accCurrent.context, debug, accCurrent.doPrivilegedAcc, accCurrent.isLimitedContext, accCurrent.limitedPerms, accCurrent.nextStackAcc, cacheChecked);
+		checkPermissionWithCache(perm, activeDC, pdCombined, debug, accCurrent.doPrivilegedAcc, accCurrent.isLimitedContext, accCurrent.limitedPerms, accCurrent.nextStackAcc, cacheChecked);
 	}
 	if (isLimited && null != permsLimited) {
 		if (checkPermWithCachedPermImplied(perm, permsLimited, cacheChecked)) {
 			return true; // implied by a limited permission
 		}
 		if (null != accNext) {
-			checkPermissionWithCache(perm, accNext.context, debug, accNext.doPrivilegedAcc, accNext.isLimitedContext, accNext.limitedPerms, accNext.nextStackAcc, cacheChecked);
+			ProtectionDomain[] pdCombined;
+			if (activeDC == null) {
+				pdCombined = accNext.context;
+			} else {
+				pdCombined = activeDC.combine((ProtectionDomain[])pdsContext, accNext.context);
+			}
+			checkPermissionWithCache(perm, activeDC, pdCombined, debug, accNext.doPrivilegedAcc, accNext.isLimitedContext, accNext.limitedPerms, accNext.nextStackAcc, cacheChecked);			
 		}
 		return false; // NOT implied by any limited permission
 	}
@@ -709,7 +730,7 @@ public void checkPermission(Permission perm) throws AccessControlException {
 	if (null != context && (STATE_AUTHORIZED != authorizeState) && containPrivilegedContext && null != System.getSecurityManager()) {
 		// only check SecurityPermission "createAccessControlContext" when context is not null, not authorized and containPrivilegedContext.
 		if (STATE_UNKNOWN == authorizeState) {
-			if (null == callerPD || callerPD.implies(createAccessControlContext)) {
+			if (null == callerPD || callerPD.implies(SecurityConstants.CREATE_ACC_PERMISSION)) {
 				authorizeState = STATE_AUTHORIZED;
 			} else {
 				authorizeState = STATE_NOT_AUTHORIZED;
@@ -718,7 +739,7 @@ public void checkPermission(Permission perm) throws AccessControlException {
 		}
 		if (STATE_NOT_AUTHORIZED == authorizeState) {
 			/*[MSG "K002d", "Access denied {0} due to untrusted AccessControlContext since {1} is denied"]*/
-			throw new AccessControlException(com.ibm.oti.util.Msg.getString("K002d", perm, createAccessControlContext), perm); //$NON-NLS-1$
+			throw new AccessControlException(com.ibm.oti.util.Msg.getString("K002d", perm, SecurityConstants.CREATE_ACC_PERMISSION), perm); //$NON-NLS-1$
 		}
 	}
 
@@ -726,7 +747,7 @@ public void checkPermission(Permission perm) throws AccessControlException {
 	if (debug) {
 		debug = debugHelper(perm);
 	}
-	checkPermissionWithCache(perm,  this.context, debug ? DEBUG_ENABLED | DEBUG_ACCESS_DENIED : DEBUG_DISABLED, this.doPrivilegedAcc,this.isLimitedContext, this.limitedPerms, this.nextStackAcc, new AccessCache());
+	checkPermissionWithCache(perm, null, this.context, debug ? DEBUG_ENABLED | DEBUG_ACCESS_DENIED : DEBUG_DISABLED, this.doPrivilegedAcc,this.isLimitedContext, this.limitedPerms, this.nextStackAcc, new AccessCache());
 }
 
 /**
@@ -838,16 +859,10 @@ public boolean equals(Object o) {
 public int hashCode() {
 	int result = 0;
 	int i = context == null ? 0 : context.length;
-	while (--i >= 0)
+	while ((--i >= 0) && (context[i] != null)) {
 		result ^= context[i].hashCode();
-/*
-	// JCK test doesn't include following two fields during hashcode calculation
-	if (null != this.domainCombiner) {
-		result ^= this.domainCombiner.hashCode();
 	}
 
-	result = result + (this.isAuthorized ? 1231 : 1237);
-*/
 	// RI equals not impacted by limited context,
 	// JCK still passes with following cause the AccessControlContext in question doesn't have limited context
 	// J9 might fail JCK test if JCK hashcode test changes
@@ -881,7 +896,7 @@ public int hashCode() {
 public DomainCombiner getDomainCombiner() {
 	SecurityManager security = System.getSecurityManager();
 	if (security != null)
-		security.checkPermission(getDomainCombiner);
+		security.checkPermission(SecurityConstants.GET_COMBINER_PERMISSION);
 	return domainCombiner;
 }
 

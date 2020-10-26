@@ -2,7 +2,7 @@
 package java.lang.ref;
 
 /*******************************************************************************
- * Copyright (c) 1998, 2010 IBM Corp. and others
+ * Copyright (c) 1998, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -20,7 +20,7 @@ package java.lang.ref;
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
  
 /**
@@ -62,7 +62,9 @@ public SoftReference(T r) {
  */	
 public T get () {
 	/*[PR 124242] SoftReference.get() should reset age*/
-	age = 0;
+	if (age != 0) {
+		age = 0;
+	}
 	return super.get();
 }
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "gc_internal.h"
@@ -36,6 +36,7 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	allocateMemoryForSublistFragment,
 	j9gc_heap_free_memory,
 	j9gc_heap_total_memory,
+	j9gc_is_garbagecollection_disabled,
 	j9gc_allsupported_memorypools,
 	j9gc_allsupported_garbagecollectors,
 	j9gc_pool_name,
@@ -47,17 +48,19 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9gc_get_collector_id,
 	j9gc_pools_memory,
 	j9gc_pool_maxmemory,
+	j9gc_pool_memoryusage,
 	j9gc_get_gc_action,
 	j9gc_get_gc_cause,
 	j9gc_get_private_hook_interface,
 	gcStartupHeapManagement,
 	gcShutdownHeapManagement,
+	j9gc_jvmPhaseChange,
 	initializeMutatorModelJava,
 	cleanupMutatorModelJava,
-	internalFreeMemorySpace,
 #if defined(J9VM_GC_FINALIZATION)
 	j9gc_finalizer_startup,
 	j9gc_finalizer_shutdown,
+	j9gc_wait_for_reference_processing,
 	runFinalization,
 #endif /* J9VM_GC_FINALIZATION */
 #if defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING)
@@ -75,6 +78,9 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	getStaticObjectAllocateFlags,
 	j9gc_scavenger_enabled,
 	j9gc_concurrent_scavenger_enabled,
+	j9gc_software_read_barrier_enabled,
+	j9gc_hot_reference_field_required,
+	j9gc_max_hot_field_list_length,
 #if defined(J9VM_GC_HEAP_CARD_TABLE)
 	j9gc_concurrent_getCardSize,
 	j9gc_concurrent_getHeapBase,
@@ -89,21 +95,18 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9gc_get_overflow_safe_alloc_size,
 	getVerboseGCFunctionTable,
 	referenceArrayCopy,
-#if defined(J9VM_GC_ARRAYLETS)
 	/* TODO: disable this entrypoint once the JIT has been updated */
 	referenceArrayCopyIndex,
-#endif /* J9VM_GC_ARRAYLETS */
 	alwaysCallReferenceArrayCopyHelper,
 	j9gc_ext_reachable_objects_do,
 	j9gc_ext_reachable_from_object_do,
 	j9gc_jit_isInlineAllocationSupported,
 	J9MetronomeWriteBarrierStore,
 	J9MetronomeWriteBarrierJ9ClassStore,
-#if defined(OMR_GC_CONCURRENT_SCAVENGER)
 	J9ReadBarrier,
-#endif /* OMR_GC_CONCURRENT_SCAVENGER */
-	j9gc_objaccess_monitorTableReadObject,
-	j9gc_objaccess_monitorTableReadObjectVM,
+	J9ReadBarrierJ9Class,
+	j9gc_weakRoot_readObject,
+	j9gc_weakRoot_readObjectVM,
 	j9gc_ext_check_is_valid_heap_object,
 #if defined(J9VM_GC_FINALIZATION)
 	j9gc_get_objects_pending_finalization_count,
@@ -176,6 +179,10 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9gc_objaccess_getArrayObjectDataAddress,
 	j9gc_objaccess_getLockwordAddress,
 	j9gc_objaccess_cloneObject,
+	j9gc_objaccess_copyObjectFields,
+	j9gc_objaccess_copyObjectFieldsToFlattenedArrayElement,
+	j9gc_objaccess_copyObjectFieldsFromFlattenedArrayElement,
+	j9gc_objaccess_structuralCompareFlattenedObjects,
 	j9gc_objaccess_cloneIndexableObject,
 	j9gc_objaccess_asConstantPoolObject,
 #if defined(J9VM_GC_REALTIME)
@@ -205,7 +212,6 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	j9mm_iterate_region_objects,
 	j9mm_find_region_for_pointer,
 	j9mm_iterate_object_slots,
-	j9mm_arraylet_identification,
 #if defined(J9VM_GC_REALTIME)
 	j9gc_objaccess_checkStringConstantsLive,
 #endif /* J9VM_GC_REALTIME */
@@ -216,17 +222,15 @@ J9MemoryManagerFunctions MemoryManagerFunctions = {
 	omrgc_get_version,
 	j9mm_abandon_object,
 	j9mm_get_guaranteed_nursery_range,
-#if defined(J9VM_GC_ARRAYLETS)
 	j9gc_arraylet_getLeafSize,
 	j9gc_arraylet_getLeafLogSize,
-#endif /* J9VM_GC_ARRAYLETS */
+	j9gc_set_allocation_sampling_interval,
 	j9gc_set_allocation_threshold,
 	j9gc_objaccess_recentlyAllocatedObject,
 	j9gc_objaccess_postStoreClassToClassLoader,
 	j9gc_objaccess_getObjectHashCode,
 	j9gc_createJavaLangString,
 	j9gc_internString,
-	j9gc_allocStringWithSharedCharData,
 #if defined(J9VM_GC_FINALIZATION)
 	j9gc_runFinalizersOnExit,
 #endif /* J9VM_GC_FINALIZATION */

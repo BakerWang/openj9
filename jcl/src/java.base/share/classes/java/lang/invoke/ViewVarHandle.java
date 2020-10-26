@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar19-SE]*/
+/*[INCLUDE-IF Sidecar19-SE & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2016, 2017 IBM Corp. and others
+ * Copyright (c) 2016, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,17 +18,17 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
 abstract class ViewVarHandle extends VarHandle {
-	ViewVarHandle(Class<?> fieldType, Class<?>[] coordinateTypes, MethodHandle[] handleTable, MethodType[] typeTable, int modifiers) {
-		super(fieldType, coordinateTypes, handleTable, typeTable, modifiers);
+	ViewVarHandle(Class<?> fieldType, Class<?>[] coordinateTypes, MethodHandle[] handleTable, int modifiers) {
+		super(fieldType, coordinateTypes, handleTable, modifiers);
 	}
 	
 	@Override
-	public boolean isAccessModeSupported(AccessMode accessMode) {
+	final boolean isAccessModeSupportedHelper(AccessMode accessMode) {
 		switch (accessMode) {
 		case GET:
 		case GET_VOLATILE:
@@ -67,6 +67,10 @@ abstract class ViewVarHandle extends VarHandle {
 		default:
 			throw new InternalError("Invalid AccessMode"); //$NON-NLS-1$
 		}
+	}
+
+	public MethodType accessModeTypeUncached(AccessMode accessMode) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
 	static class ViewVarHandleOperations extends VarHandleOperations {

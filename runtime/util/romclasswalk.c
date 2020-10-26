@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "j9consts.h"
@@ -46,10 +46,8 @@ static void allSlotsInCPShapeDescriptionDo (J9ROMClass* romClass, J9ROMClassWalk
 static void allSlotsInCallSiteDataDo (J9ROMClass* romClass, J9ROMClassWalkCallbacks* callbacks, void* userData);
 static UDATA allSlotsInMethodParametersDataDo(J9ROMClass* romClass, U_8* cursor, J9ROMClassWalkCallbacks* callbacks, void* userData);
 
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 static void allSlotsInStaticSplitMethodRefIndexesDo (J9ROMClass* romClass, J9ROMClassWalkCallbacks* callbacks, void* userData);
 static void allSlotsInSpecialSplitMethodRefIndexesDo (J9ROMClass* romClass, J9ROMClassWalkCallbacks* callbacks, void* userData);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 static void nullSlotCallback(J9ROMClass*, U_32, void*, const char*, void*);
 static void nullSectionCallback(J9ROMClass*, void*, UDATA, const char*, void*);
 static BOOLEAN defaultValidateRangeCallback(J9ROMClass*, void*, UDATA, void*);
@@ -138,24 +136,22 @@ void allSlotsInROMClassDo(J9ROMClass* romClass,
 	SLOT_CALLBACK(romClass, J9ROM_U32,  romClass, memberAccessFlags);
 	SLOT_CALLBACK(romClass, J9ROM_U32,  romClass, innerClassCount);
 	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, innerClasses);
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
-	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, memberOfNest);
+#if JAVA_SPEC_VERSION >= 11
+	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, nestHost);
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, nestMemberCount);
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, unused);
 	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, nestMembers);
-#endif /* defined(J9VM_OPT_VALHALLA_NESTMATES) */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, majorVersion);
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, minorVersion);
 	SLOT_CALLBACK(romClass, J9ROM_U32,  romClass, optionalFlags);
 	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, optionalInfo);
 	SLOT_CALLBACK(romClass, J9ROM_U32,  romClass, maxBranchCount);
 	SLOT_CALLBACK(romClass, J9ROM_U32,  romClass, methodTypeCount);
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, staticSplitMethodRefCount);
 	SLOT_CALLBACK(romClass, J9ROM_U16,  romClass, specialSplitMethodRefCount);
 	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, staticSplitMethodRefIndexes);
 	SLOT_CALLBACK(romClass, J9ROM_SRP,  romClass, specialSplitMethodRefIndexes);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 	/* walk interfaces SRPs block */
 	srpCursor = J9ROMCLASS_INTERFACES(romClass);
@@ -168,7 +164,7 @@ void allSlotsInROMClassDo(J9ROMClass* romClass,
 		}
 	}
 
-	/* walk innner classes SRPs block */
+	/* walk inner classes SRPs block */
 	srpCursor = J9ROMCLASS_INNERCLASSES(romClass);
 	count = romClass->innerClassCount;
 	rangeValid = callbacks->validateRangeCallback(romClass, srpCursor, count * sizeof(J9SRP), userData);
@@ -193,10 +189,8 @@ void allSlotsInROMClassDo(J9ROMClass* romClass,
 	allSlotsInConstantPoolDo(romClass, callbacks, userData);
 	allSlotsInCallSiteDataDo(romClass, callbacks, userData);
 	allSlotsInOptionalInfoDo(romClass, callbacks, userData);
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	allSlotsInStaticSplitMethodRefIndexesDo(romClass, callbacks, userData);
 	allSlotsInSpecialSplitMethodRefIndexesDo(romClass, callbacks, userData);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 }
 
 static void allSlotsInROMMethodsSectionDo(J9ROMClass *romClass, J9ROMClassWalkCallbacks *callbacks, void *userData)
@@ -509,10 +503,8 @@ static void allSlotsInBytecodesDo(J9ROMClass* romClass, J9ROMMethod* method, J9R
 			case JBanewarray:
 			case JBcheckcast:
 			case JBinstanceof:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)			
 			case JBinvokestaticsplit:
 			case JBinvokespecialsplit:
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 				callbacks->slotCallback(romClass, J9ROM_U16, pc, "bcArg16", userData);
 				pc += 2;
 				break;
@@ -617,7 +609,7 @@ static void allSlotsInCPShapeDescriptionDo(J9ROMClass* romClass, J9ROMClassWalkC
 	U_32 *cpShapeDescription = J9ROMCLASS_CPSHAPEDESCRIPTION(romClass);
 	BOOLEAN rangeValid;
 
-	count = (romClass->romConstantPoolCount + (sizeof(U_32) * 2) - 1) / (sizeof(U_32) * 2);
+	count = (romClass->romConstantPoolCount + J9_CP_DESCRIPTIONS_PER_U32 - 1) / J9_CP_DESCRIPTIONS_PER_U32;
 
 	rangeValid = callbacks->validateRangeCallback(romClass, cpShapeDescription, count * sizeof(U_32), userData);
 	if (rangeValid) {
@@ -677,13 +669,12 @@ static void allSlotsInConstantPoolDo(J9ROMClass* romClass, J9ROMClassWalkCallbac
 				callbacks->slotCallback(romClass, J9ROM_U32, &((J9ROMFieldRef *)&constantPool[index])->classRefCPIndex, "cpFieldClassRef", userData);
 				break;
 
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-			case J9CPTYPE_SHARED_METHOD:
-#endif /* !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			case J9CPTYPE_HANDLE_METHOD:
 			case J9CPTYPE_INSTANCE_METHOD:
 			case J9CPTYPE_STATIC_METHOD:
 			case J9CPTYPE_INTERFACE_METHOD:
+			case J9CPTYPE_INTERFACE_INSTANCE_METHOD:
+			case J9CPTYPE_INTERFACE_STATIC_METHOD:
 				callbacks->slotCallback(romClass, J9ROM_NAS, &((J9ROMMethodRef *)&constantPool[index])->nameAndSignature, "cpFieldNAS", userData);
 				callbacks->slotCallback(romClass, J9ROM_U32, &((J9ROMMethodRef *)&constantPool[index])->classRefCPIndex, "cpFieldClassRef", userData);
 				break;
@@ -699,9 +690,7 @@ static void allSlotsInConstantPoolDo(J9ROMClass* romClass, J9ROMClassWalkCallbac
 				break;
 
 			case J9CPTYPE_UNUSED:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 			case J9CPTYPE_UNUSED8:
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 				callbacks->slotCallback(romClass, J9ROM_U64, &constantPool[index], "cpFieldUnused", userData);
 				break;
 
@@ -710,6 +699,96 @@ static void allSlotsInConstantPoolDo(J9ROMClass* romClass, J9ROMClassWalkCallbac
 				return;
 		}
 	}
+}
+
+static UDATA
+allSlotsInRecordComponentDo(J9ROMClass* romClass, J9ROMRecordComponentShape* recordComponent, J9ROMClassWalkCallbacks* callbacks, void* userData) {
+	BOOLEAN rangeValid = FALSE;
+	U_32 attributeFlags = 0;
+	J9ROMNameAndSignature *recordComponentNAS = NULL;
+	UDATA increment = 0; /* this will be the size of the record component in U_32 to match results from allSlotsInAnnotationDo. */
+
+	rangeValid = callbacks->validateRangeCallback(romClass, recordComponent, sizeof(J9ROMRecordComponentShape), userData);
+	if (FALSE == rangeValid) {
+		return 0;
+	}
+
+	attributeFlags = recordComponent->attributeFlags;
+	recordComponentNAS = &recordComponent->nameAndSignature;
+
+	SLOT_CALLBACK(romClass, J9ROM_UTF8, recordComponentNAS, name);
+	SLOT_CALLBACK(romClass, J9ROM_UTF8, recordComponentNAS, signature);
+	SLOT_CALLBACK(romClass, J9ROM_U32, recordComponent, attributeFlags);
+
+	increment += sizeof(J9ROMRecordComponentShape) / sizeof(U_32);
+
+	if (J9_ARE_ANY_BITS_SET(attributeFlags, J9RecordComponentFlagHasGenericSignature)) {
+		rangeValid = callbacks->validateRangeCallback(romClass, (U_32*)recordComponent + increment, sizeof(J9SRP), userData);
+		if (rangeValid) {
+			callbacks->slotCallback(romClass, J9ROM_UTF8, (U_32*)recordComponent + increment, "recordComponentGenSigUTF8", userData);
+		}
+		increment += sizeof(J9SRP) / sizeof(U_32);
+	}
+
+	if (J9_ARE_ANY_BITS_SET(attributeFlags, J9RecordComponentFlagHasAnnotations)) {
+		increment += allSlotsInAnnotationDo(romClass, (U_32*)recordComponent + increment, "recordComponentAnnotation", callbacks, userData);
+	}
+
+	if (J9_ARE_ANY_BITS_SET(attributeFlags, J9RecordComponentFlagHasTypeAnnotations)) {
+		increment += allSlotsInAnnotationDo(romClass, (U_32*)recordComponent + increment, "recordComponentTypeAnnotations", callbacks, userData);
+	}
+
+	callbacks->sectionCallback(romClass, recordComponent, increment * sizeof(U_32), "recordComponentInfo", userData);
+
+	return increment;
+}
+
+static void allSlotsInRecordDo(J9ROMClass* romClass, U_32* recordPointer, J9ROMClassWalkCallbacks* callbacks, void* userData) {
+	BOOLEAN rangeValid = FALSE;
+	U_32 recordComponentCount = 0;
+	U_32* cursor = recordPointer;
+
+	rangeValid = callbacks->validateRangeCallback(romClass, recordPointer, sizeof(U_32), userData);
+	if (FALSE == rangeValid) {
+		return;
+	}
+	callbacks->slotCallback(romClass, J9ROM_U32, recordPointer, "recordComponentCount", userData);
+	cursor += 1;
+	recordComponentCount = *recordPointer;
+
+	for (; recordComponentCount > 0; recordComponentCount--) {
+		cursor += allSlotsInRecordComponentDo(romClass, (J9ROMRecordComponentShape*)cursor, callbacks, userData);
+	}
+
+	callbacks->sectionCallback(romClass, recordPointer, (UDATA)cursor - (UDATA)recordPointer, "recordInfo", userData);
+}
+
+static void 
+allSlotsInPermittedSubclassesDo(J9ROMClass* romClass, U_32* permittedSubclassesPointer, J9ROMClassWalkCallbacks* callbacks, void* userData)
+{
+	BOOLEAN rangeValid = FALSE;
+	U_32 *cursor = permittedSubclassesPointer;
+	U_32 permittedSubclassesCount = 0;
+
+	rangeValid = callbacks->validateRangeCallback(romClass, cursor, sizeof(U_32), userData);
+	if (FALSE == rangeValid) {
+		return;
+	}
+
+	callbacks->slotCallback(romClass, J9ROM_U32, cursor, "permittedSubclassesCount", userData);
+	cursor += 1;
+	permittedSubclassesCount = *permittedSubclassesPointer;
+	
+	for (; permittedSubclassesCount > 0; permittedSubclassesCount--) {
+		rangeValid = callbacks->validateRangeCallback(romClass, cursor, sizeof(U_32), userData);
+		if (FALSE == rangeValid) {
+			return;
+		}
+		callbacks->slotCallback(romClass, J9ROM_UTF8, cursor, "className", userData);
+		cursor += 1;
+	}
+
+	callbacks->sectionCallback(romClass, permittedSubclassesPointer, (UDATA)cursor - (UDATA)permittedSubclassesPointer, "permittedSubclassesInfo", userData);
 }
 
 /*
@@ -784,11 +863,25 @@ allSlotsInOptionalInfoDo(J9ROMClass* romClass, J9ROMClassWalkCallbacks* callback
 		}
 		cursor++;
 	}
-
+	if (J9_ARE_ANY_BITS_SET(romClass->optionalFlags, J9_ROMCLASS_OPTINFO_RECORD_ATTRIBUTE)) {
+		rangeValid = callbacks->validateRangeCallback(romClass, cursor, sizeof(J9SRP), userData);
+		if (rangeValid) {
+			callbacks->slotCallback(romClass, J9ROM_SRP, cursor, "recordSRP", userData);
+			allSlotsInRecordDo(romClass, SRP_PTR_GET(cursor, U_32*), callbacks, userData);
+		}
+		cursor++;
+	}
+	if (J9ROMCLASS_IS_SEALED(romClass)) {
+		rangeValid = callbacks->validateRangeCallback(romClass, cursor, sizeof(J9SRP), userData);
+		if (rangeValid) {
+			callbacks->slotCallback(romClass, J9ROM_SRP, cursor, "permittedSubclassesSRP", userData);
+			allSlotsInPermittedSubclassesDo(romClass, SRP_PTR_GET(cursor, U_32*), callbacks, userData);
+		}
+		cursor++;
+	}
 	callbacks->sectionCallback(romClass, optionalInfo, (UDATA)cursor - (UDATA)optionalInfo, "optionalInfo", userData);
 }
 
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 static void 
 allSlotsInStaticSplitMethodRefIndexesDo(J9ROMClass* romClass, J9ROMClassWalkCallbacks* callbacks, void* userData)
 {
@@ -830,7 +923,6 @@ allSlotsInSpecialSplitMethodRefIndexesDo(J9ROMClass* romClass, J9ROMClassWalkCal
 		}
 	}
 }
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 #ifndef SWAP2BE
 #ifdef J9VM_ENV_LITTLE_ENDIAN
@@ -1209,6 +1301,8 @@ static void allSlotsInCallSiteDataDo (J9ROMClass* romClass, J9ROMClassWalkCallba
 	 *			U_16 argument[argumentCount];
 	 *		} bootStrapMethodData[romClass->bsmCount];
 	 * }
+	 * 
+	 * Note: SRP is 32 bits
 	 */
 	BOOLEAN rangeValid;
 	UDATA index, bsmArgumentCount;

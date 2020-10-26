@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef ibmjvmti_h
@@ -44,16 +44,9 @@
  *-----------------------------------------------------------------------------
  */
 
-#define COM_IBM_GET_POTENTIAL_EXTENDED_CAPABILITIES "com.ibm.GetPotentialExtendedCapabilities"
-#define COM_IBM_ADD_EXTENDED_CAPABILITIES "com.ibm.AddExtendedCapabilities"
-#define COM_IBM_RELINQUISH_EXTENDED_CAPABILITIES "com.ibm.RelinquishExtendedCapabilities"
-#define COM_IBM_GET_EXTENDED_CAPABILITIES "com.ibm.GetExtendedCapabilities"
-
 #define COM_IBM_COMPILING_START "com.ibm.CompilingStart"
 #define COM_IBM_COMPILING_END "com.ibm.CompilingEnd"
 
-#define COM_IBM_METHOD_ENTRY_EXTENDED       "com.ibm.MethodEntryExtended"
-#define COM_IBM_METHOD_EXIT_NO_RC           "com.ibm.MethodExitNoRc"
 #define COM_IBM_INSTRUMENTABLE_OBJECT_ALLOC "com.ibm.InstrumentableObjectAlloc"
 
 #define COM_IBM_SET_VM_TRACE "com.ibm.SetVmTrace"
@@ -70,18 +63,7 @@
 #define COM_IBM_SET_VM_JLM "com.ibm.SetVmJlm"
 #define COM_IBM_SET_VM_JLM_DUMP "com.ibm.SetVmJlmDump"
 
-#define COM_IBM_ALLOW_INLINING_WITH_METHOD_ENTER_EXIT "com.ibm.AllowMethodInliningWithMethodEnterExit"
-#define COM_IBM_ALLOW_DIRECT_JNI_WITH_METHOD_ENTER_EXIT "com.ibm.AllowDirectJNIWithMethodEnterExit"
-#define COM_IBM_SET_VM_AND_COMPILING_CONTROL_OPTIONS "com.ibm.SetVmAndCompilingControlOptions"
-#define COM_IBM_SET_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY "com.ibm.jvmtiSetMethodSelectiveEntryExitNotification"
-#define COM_IBM_SET_EXTENDED_EVENT_NOTIFICATION_MODE "com.ibm.jvmtiSetExtendedEventNotificationMode"
-#define COM_IBM_CLEAR_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY "com.ibm.jvmtiClearMethodSelectiveEntryExitNotification"
-
 #define COM_IBM_GET_OS_THREAD_ID "com.ibm.GetOSThreadID"
-
-#define COM_IBM_SIGNAL_ASYNC_EVENT "com.ibm.SignalAsyncEvent"
-#define COM_IBM_CANCEL_ASYNC_EVENT "com.ibm.CancelAsyncEvent"
-#define COM_IBM_ASYNC_EVENT "com.ibm.AsyncEvent"
 
 #define COM_IBM_GET_STACK_TRACE_EXTENDED "com.ibm.GetStackTraceExtended"
 #define COM_IBM_GET_ALL_STACK_TRACES_EXTENDED "com.ibm.GetAllStackTracesExtended"
@@ -95,8 +77,6 @@
 
 #define COM_IBM_ITERATE_SHARED_CACHES "com.ibm.IterateSharedCaches"
 #define COM_IBM_DESTROY_SHARED_CACHE "com.ibm.DestroySharedCache"
-
-#define COM_IBM_ARRAY_CLASS_LOAD "com.ibm.ArrayClassLoad"
 
 #define COM_IBM_REMOVE_ALL_TAGS   "com.ibm.RemoveAllTags"
 
@@ -125,6 +105,10 @@
 #define COM_IBM_SHARED_CACHE_MODLEVEL_JAVA7 3
 #define COM_IBM_SHARED_CACHE_MODLEVEL_JAVA8 4
 #define COM_IBM_SHARED_CACHE_MODLEVEL_JAVA9 5
+/* 
+ * No macro is defined for shared cache modLevel starting from Java 10. The value of modLevel equals to the java version number
+ * on which the shared cache is created.
+ */
 
 #define COM_IBM_SHARED_CACHE_ADDRMODE_32 32
 #define COM_IBM_SHARED_CACHE_ADDRMODE_64 64
@@ -177,10 +161,6 @@ enum {
 	COM_IBM_JLM_START_TIME_STAMP = 1,
 	COM_IBM_JLM_STOP = 2,
 	COM_IBM_JLM_STOP_TIME_STAMP = 3
-};
-
-enum {
-	COM_IBM_ENABLE_SELECTIVE_METHOD_ENTRY_EXIT_NOTIFICATION = 0
 };
 
 enum {
@@ -289,6 +269,7 @@ typedef struct jvmtiStackInfoExtended {
 #define COM_IBM_ITERATE_SHARED_CACHES_VERSION_2 2
 #define COM_IBM_ITERATE_SHARED_CACHES_VERSION_3 3
 #define COM_IBM_ITERATE_SHARED_CACHES_VERSION_4 4
+#define COM_IBM_ITERATE_SHARED_CACHES_VERSION_5 5
 
 /**
  * The following 5 macros can be used to get address mode and compressedRefs mode from jvmtiSharedCacheInfo.addrMode when COM_IBM_ITERATE_SHARED_CACHES_VERSION_3 or later is specified.
@@ -314,9 +295,10 @@ typedef struct jvmtiStackInfoExtended {
  * lastDetach - time from which last detach has happened
  * cacheType - the type of the cache. This is the new field included when COM_IBM_ITERATE_SHARED_CACHES_VERSION_2 or later is specified
  * softMaxBytes - the soft limit for the available space in the cache. This is the new field included when COM_IBM_ITERATE_SHARED_CACHES_VERSION_4 or later is specified
+ * layer - the shared cache layer number. It is -1 if the shared cache does not have a layer number. This is the new field included when COM_IBM_ITERATE_SHARED_CACHES_VERSION_5 or later is specified
  * 
  * If IBM adds new information to this structure, it will be added
- * to the end to preserve backwards compability, and
+ * to the end to preserve backwards compatibility, and
  * COM_IBM_ITERATE_SHARED_CACHES_VERSION will be incremented.
  */
 typedef struct jvmtiSharedCacheInfo {
@@ -333,6 +315,7 @@ typedef struct jvmtiSharedCacheInfo {
 	jlong lastDetach;
 	jint cacheType;
 	jlong softMaxBytes;
+	jint layer;
 } jvmtiSharedCacheInfo;
 
 /**
@@ -358,26 +341,6 @@ typedef struct jvmtiObjectRenameInfo {
     jlong oldAutoTag;
     jlong newAutoTag;
 } jvmtiObjectRenameInfo;
-
-/**
- * Signature of callback function which may be provided to the jvmtiAutotaggedObjectAlloc callback.
- * This function is callback-safe and it has the same parameters as VMObjectAlloc, plus a pointer to userData.
- * 
- * JNIEnv - the JNI environment of the event (current) thread.
- * thread - thread allocating the object.
- * object - JNI local reference to the object that was allocated.
- * object_klass	- JNI local reference to the class of the object.
- * size	- size of the object (in bytes).
- * userData - pointer received in the jvmtiAutotaggedObjectAlloc callback
- */ 
-typedef void (JNICALL *jvmtiAutotaggedObjectAllocCallbackSafeFunction)(
-	jvmtiEnv *jvmti_env,
-	JNIEnv* jni_env,
-	jthread thread,
-	jobject object,
-	jclass object_klass,
-	jlong size,
-	void *userData);
 
 /*
  * Trace subscriber callback function. This function will be passed records containing trace

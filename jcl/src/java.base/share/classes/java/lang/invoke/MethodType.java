@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar17]*/
+/*[INCLUDE-IF Sidecar18-SE]*/
 /*******************************************************************************
- * Copyright (c) 2009, 2017 IBM Corp. and others
+ * Copyright (c) 2009, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +18,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
@@ -28,6 +28,11 @@ import java.io.ObjectOutputStream;
 import java.io.ObjectStreamException;
 import java.io.ObjectStreamField;
 import java.io.Serializable;
+/*[IF Java12]*/
+import java.lang.constant.Constable;
+import java.lang.constant.ClassDesc;
+import java.lang.constant.MethodTypeDesc;
+/*[ENDIF]*/
 import java.lang.ref.Reference;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
@@ -38,13 +43,17 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+/*[IF Java12]*/
+import java.util.NoSuchElementException;
+import java.util.Optional;
+/*[ENDIF]*/
 import java.util.Set;
 import java.util.WeakHashMap;
 
 import com.ibm.oti.util.Msg;
 import com.ibm.oti.vm.VM;
 
-/*[IF Sidecar19-SE-OpenJ9]*/
+/*[IF Sidecar18-SE-OpenJ9]*/
 import java.lang.invoke.MethodTypeForm;
 /*[ENDIF]*/
 
@@ -60,35 +69,17 @@ import java.lang.invoke.MethodTypeForm;
  * @since 1.7
  */
 @VMCONSTANTPOOL_CLASS
-public final class MethodType implements Serializable {
+public final class MethodType implements Serializable 
+/*[IF Java12]*/
+	, Constable, TypeDescriptor.OfMethod<Class<?>, MethodType>
+/*[ENDIF]*/
+{
 	static final Class<?>[] EMTPY_PARAMS = new Class<?>[0];
-	static final Set<Class<?>> WRAPPER_SET;
-	static {
-		Class<?>[] wrappers = {Byte.class, Character.class, Double.class, Float.class, Integer.class, Long.class, Short.class, Boolean.class };
-		WRAPPER_SET = Collections.unmodifiableSet(new HashSet<Class<?>>(Arrays.asList(wrappers)));
-	}
 
 /*[IF Sidecar19-SE-OpenJ9]*/	
 	private MethodTypeForm form;
 /*[ENDIF]*/	
-	
-	/*[IF ]*/
-	/* Do not include 'primitives.put("V", void.class)' as void.class is not yet loaded when
-	 * MethodType gets loaded and this will cause the VM not to start.  See the code
-	 * in Class#getPrimitiveClass() for the issue. */
-	/*[ENDIF]*/
-	static final Class<?>[] primitivesArray = new Class<?>[26];
-	static {
-		primitivesArray['B' - 'A'] = byte.class;
-		primitivesArray['C' - 'A'] = char.class;
-		primitivesArray['D' - 'A'] = double.class;
-		primitivesArray['F' - 'A'] = float.class;
-		primitivesArray['I' - 'A'] = int.class;
-		primitivesArray['J' - 'A'] = long.class;
-		primitivesArray['S' - 'A'] = short.class;
-		primitivesArray['Z' - 'A'] = boolean.class;
-	}
-	
+
 	private static Map<MethodType, WeakReference<MethodType>> internTable = Collections.synchronizedMap(new WeakHashMap<MethodType, WeakReference<MethodType>>());
 	// lock object to control insertion of new MTs
 	static final class InternTableAddLock { }
@@ -121,6 +112,21 @@ public final class MethodType implements Serializable {
 	/* Indicate that there are no persistent/serializable fields in MethodType */
 	private static final ObjectStreamField[] serialPersistentFields = new ObjectStreamField[0];
 	private static final long serialVersionUID = 292L;
+	private DeserializedFieldsHolder deserializedFields;
+
+	/**
+	 * Holder for the deserialized arguments[] and returnType values
+	 * from #readObject() so they can be passed to #readResolve()
+	 */
+	private static class DeserializedFieldsHolder {
+		Class<?> returnType;
+		Class<?>[] arguments;
+
+		DeserializedFieldsHolder(Class<?> rtype, Class<?>[] args) {
+			returnType = (rtype == null) ? void.class : rtype;
+			arguments = (args == null) ? EMTPY_PARAMS : args;
+		}
+	}
 
 	/*
 	 * Private constructor as MethodTypes need to be interned.  
@@ -198,7 +204,6 @@ public final class MethodType implements Serializable {
 		}
 		return ints;
 	}
-
 
 	/**
 	 * Convenience method to create a new MethodType with only the parameter at 
@@ -318,7 +323,7 @@ public final class MethodType implements Serializable {
 	 * <li>(II)V - method taking two ints and return void</li>
 	 * <li>(I)Ljava/lang/Integer; - method taking an int and returning an Integer</li>
 	 * <li>([I)I - method taking an array of ints and returning an int</li>
-	 * <ul>
+	 * </ul>
 	 * 
 	 * @param methodDescriptor - the method descriptor string 
 	 * @param loader - the ClassLoader to be used or null for System ClassLoader 
@@ -330,6 +335,12 @@ public final class MethodType implements Serializable {
 	public static MethodType fromMethodDescriptorString(String methodDescriptor, ClassLoader loader) {
 		ClassLoader classLoader = loader; 
 		if (classLoader == null) {
+			/*[IF Java14]*/
+			SecurityManager security = System.getSecurityManager();
+			if (security != null) {
+				security.checkPermission(sun.security.util.SecurityConstants.GET_CLASSLOADER_PERMISSION);
+			}
+			/*[ENDIF]*/
 			classLoader = ClassLoader.getSystemClassLoader();
 		}
 		
@@ -360,22 +371,41 @@ public final class MethodType implements Serializable {
 		return mt;
 	}
 	
-	/*
-	 * Convert the string from bytecode format to the format needed for ClassLoader#loadClass().
-	 * Change all '/' to '.'.
-	 * Remove the 'L' & ';' from objects, unless they are array classes.
+	/**
+	 * Internal helper method for generating a MethodType from a descriptor string,
+	 * and append an extra argument type.
+	 * 
+	 * VarHandle call sites use this method to generate the MethodType that matches
+	 * the VarHandle method implementation (extra VarHandle argument).
 	 */
-	private static final Class<?> nonPrimitiveClassFromString(String name, ClassLoader classLoader) {
-		try {
-			name = name.replace('/', '.');
-			if (name.indexOf('L') == 0) {
-				// Remove the 'L' and ';'
-				name = name.substring(1, name.length() - 1);
-			}
-			return Class.forName(name, false, classLoader);
-		} catch(ClassNotFoundException e){
-			throw new TypeNotPresentException(name, e);
+	@SuppressWarnings("unused")  /* Used by native code */
+	private static final MethodType fromMethodDescriptorStringAppendArg(String methodDescriptor, ClassLoader loader, Class<?> appendArgumentType) {
+		List<Class<?>> types = parseIntoClasses(methodDescriptor, loader);
+		Class<?> returnType = types.remove(types.size() - 1);
+		types.add(appendArgumentType);
+		
+		return methodType(returnType, types);
+	}
+
+	/**
+	 * Helper method to throw NoClassDefFoundError if the cause of TypeNotPresentException 
+	 * is ClassNotFoundException. Otherwise, re-throw TypeNotPresentException.
+	 * 
+	 * @param e - an instance of TypeNotPresentException
+	 * 
+	 * @return a Throwable object to prevent any fall through case
+	 * 
+	 * @throws NoClassDefFoundError - if the cause of e is ClassNotFoundException
+	 * @throws TypeNotPresentException - if the cause of e is not ClassNotFoundException
+	 */
+	private static final Throwable throwNoClassDefFoundError(TypeNotPresentException e) {
+		Throwable cause = e.getCause();
+		if (cause instanceof ClassNotFoundException) {
+			NoClassDefFoundError noClassDefFoundError = new NoClassDefFoundError(cause.getMessage());
+			noClassDefFoundError.initCause(cause);
+			throw noClassDefFoundError;
 		}
+		throw e;
 	}
 
 	/*
@@ -402,12 +432,9 @@ public final class MethodType implements Serializable {
 		
 		ArrayList<Class<?>> args = new ArrayList<Class<?>>();
 		
-		while((index < length) ) {
-			char current = signature[index];
-			Class<?> c;
-			
+		while(index < length) {
 			/* Ensure we only see one ')' closing bracket */
-			if ((current == ')')) {
+			if ((signature[index] == ')')) {
 				if (closeBracket) {
 					/*[MSG "K05d5", "too many ')': {0}"]*/
 					throw new IllegalArgumentException(Msg.getString("K05d5", methodDescriptor)); //$NON-NLS-1$
@@ -416,43 +443,8 @@ public final class MethodType implements Serializable {
 				index++;
 				continue;
 			}
-			
-			if ((current == 'L') || (current == '[')) {
-				int start = index;
-				while(signature[index] == '[') {
-					index++;
-				}
-				String name;
-				if (signature[index] != 'L') {
-					name = methodDescriptor.substring(start, index + 1);
-				} else { 
-					int end = methodDescriptor.indexOf(';', index);
-					if (end == -1) {
-						/*[MSG "K05d6", "malformed method descriptor: {0}"]*/
-						throw new IllegalArgumentException(Msg.getString("K05d6", methodDescriptor)); //$NON-NLS-1$
-					}
-					name = methodDescriptor.substring(start, end + 1);
-					index = end;
-				}
-				c = nonPrimitiveClassFromString(name, classLoader);
-			} else {
-				try {
-					c = primitivesArray[current - 'A'];
-				} catch(ArrayIndexOutOfBoundsException e) {
-					c = null;
-				}
-				if (c == null) {
-					if (current == 'V') {
-						// lazily add 'V' to work around load ordering issues
-						primitivesArray['V' - 'A'] = void.class;
-						c = void.class;
-					} else {
-						/*[MSG "K05d7", "not a primitive: {0}"]*/
-						throw new IllegalArgumentException(Msg.getString("K05d7", current)); //$NON-NLS-1$
-					}
-				}
-			}
-			args.add(c);
+
+			index = MethodTypeHelper.parseIntoClass(signature, index, args, classLoader, methodDescriptor);
 			index++;
 		}
 		return args;
@@ -516,11 +508,11 @@ public final class MethodType implements Serializable {
 	 * @return whether the MethodType contains any wrapper types
 	 */
 	public boolean hasWrappers() {
-		if (WRAPPER_SET.contains(returnType) || (returnType == Void.class)){
+		if (MethodTypeHelper.WRAPPER_SET.contains(returnType) || (returnType == Void.class)){
 			return true;
 		}
 		for(Class<?> c : arguments){
-			if (WRAPPER_SET.contains(c)){
+			if (MethodTypeHelper.WRAPPER_SET.contains(c)){
 				return true;
 			}
 		}
@@ -748,11 +740,11 @@ public final class MethodType implements Serializable {
 	/**
 	 * Wrapper on {@link #methodType(Class, Class[])}.
 	 * <br>
-	 * Return a MethodType with an Object return and only Object parameters.  If isVarags is true, the
+	 * Return a MethodType with an Object return and only Object parameters.  If isVarargs is true, the
 	 * final parameter will be an Object[].  This Object[] parameter is NOT included in the numParameters
 	 * count. 
 	 * 
-	 * @param numParameters - number of parameters not including the isVarags parameter (if requested)
+	 * @param numParameters - number of parameters not including the isVarargs parameter (if requested)
 	 * @param isVarargs - if the Object[] parameter should be added
 	 * @return the requested MethodType object
 	 * @throws IllegalArgumentException if numParameters is less than 0 or greater than the allowed number of arguments (255 or 254 if isVarargs)
@@ -781,7 +773,7 @@ public final class MethodType implements Serializable {
 	 * 
 	 * @return the parameter types as an array
 	 */
-	public Class<?>[] parameterArray(){
+	public Class<?>[] parameterArray() {
 		return arguments.clone();
 	}
 
@@ -790,10 +782,19 @@ public final class MethodType implements Serializable {
 	 * 
 	 * @return the number of parameters
 	 */
-	public int parameterCount(){
+	public int parameterCount() {
 		return arguments.length;
 	}
-	
+
+	/**
+	 * Method to return array of arguments
+	 *
+	 * @return array of arguments
+	 */
+	Class<?>[] ptypes() {
+		return arguments;
+	}
+
 	/**
 	 * Helper method to return the parameter types in a List.
 	 * <br>  
@@ -801,7 +802,7 @@ public final class MethodType implements Serializable {
 	 * 
 	 * @return the parameter types as a List
 	 */
-	public List<Class<?>> parameterList(){
+	public List<Class<?>> parameterList() {
 		List<Class<?>> list = Arrays.asList(arguments.clone()); 
 		return Collections.unmodifiableList(list);
 	}     
@@ -824,18 +825,25 @@ public final class MethodType implements Serializable {
 	/**
 	 * @return the type of the return
 	 */
-	public Class<?> returnType(){
+	public Class<?> returnType() {
 		return returnType;
 	}
 	
-	/* Return the last class in the parameterType array.
+	/**
+	 * Return the last class in the parameterType array.
 	 * This is equivalent to:
 	 * 		type.parameterType(type.parameterCount() - 1)
-	 * Will throw ArrayIndexOutOfBounds on bad indexes.  This is a subclass of IndexOutOfBoundsException
-	 * so this is valid when JCKs expect certain exceptions.
+	 * @return class of final parameter, or void.class if there are no parameters
 	 */
-	/* package */ Class<?> lastParameterType() {
-		 return arguments[arguments.length - 1];
+	/*[IF Java10]*/
+	public
+	/*[ENDIF]*/
+	Class<?> lastParameterType() {
+		Class<?> result = void.class;
+		if (arguments.length > 0) {
+			result = arguments[arguments.length - 1];
+		}
+		return result;
 	}
 	
 	/**
@@ -851,10 +859,10 @@ public final class MethodType implements Serializable {
 	private String createMethodDescriptorString(){
 		StringBuilder sb= new StringBuilder("("); //$NON-NLS-1$
 		for (Class<?> c : arguments){
-			sb.append(getBytecodeStringName(c));
+			sb.append(MethodTypeHelper.getBytecodeStringName(c));
 		}
 		sb.append(")"); //$NON-NLS-1$
-		sb.append(getBytecodeStringName(returnType));
+		sb.append(MethodTypeHelper.getBytecodeStringName(returnType));
 		return sb.toString();
 	}
 	
@@ -890,10 +898,10 @@ public final class MethodType implements Serializable {
 	public MethodType unwrap(){
 		Class<?>[] args = arguments.clone();
 		for(int i = 0; i < args.length; i++){
-			args[i] = unwrapPrimitive(args[i]);
+			args[i] = MethodTypeHelper.unwrapPrimitive(args[i]);
 		}
-		Class<?> unwrappedReturnType = unwrapPrimitive(returnType);
-		if (unwrapPrimitive(returnType) == Void.class) {
+		Class<?> unwrappedReturnType = MethodTypeHelper.unwrapPrimitive(returnType);
+		if (MethodTypeHelper.unwrapPrimitive(returnType) == Void.class) {
 			unwrappedReturnType = void.class;
 		}
 		return methodType(unwrappedReturnType, args, false);
@@ -910,9 +918,9 @@ public final class MethodType implements Serializable {
 	public MethodType wrap(){
 		Class<?>[] args = arguments.clone();
 		for(int i = 0; i < args.length; i++){
-			args[i] = wrapPrimitive(args[i]);
+			args[i] = MethodTypeHelper.wrapPrimitive(args[i]);
 		}
-		return methodType(wrapPrimitive(returnType), args, false);
+		return methodType(MethodTypeHelper.wrapPrimitive(returnType), args, false);
 	}
 	
 	/**
@@ -946,113 +954,7 @@ public final class MethodType implements Serializable {
 		combinedParameters.addAll(classes);
 		return methodType(returnType, combinedParameters);
 	}
-	
-	/**
-	 * Returns the appropriate wrapper class or the original class
-	 * @param primitveClass The class to convert to a wrapper class
-	 * @return The wrapper class or the original class if no wrapper is available
-	 */
-	static Class<?> wrapPrimitive(Class<?> primitveClass) {
-		if (primitveClass.isPrimitive()) {
-			if (int.class == primitveClass){ //I
-				return Integer.class;
-			}
-			if (long.class == primitveClass){ //J
-				return Long.class;
-			}
-			if (byte.class == primitveClass){	//B
-				return Byte.class;
-			}
-			if (char.class == primitveClass){ //C
-				return Character.class;
-			}
-			if (double.class == primitveClass){ //D
-				return Double.class;
-			}
-			if (float.class == primitveClass){ //F
-				return Float.class;
-			}
-			if (boolean.class == primitveClass){ //Z
-				return Boolean.class;
-			}
-			if (void.class == primitveClass) {
-				return Void.class;
-			}
-			if (short.class == primitveClass){ //S
-				return Short.class;
-			}
-		}
-		return primitveClass;
-	}
-	
-	
-	/**
-	 * Takes a class and returns the corresponding primitive if one exists.
-	 * @param wrapperClass The class to check for primitive classes.
-	 * @return The corresponding primitive class or the input class.
-	 */
-	/*[IF ]*/
-	/* Note that Void.class is not handled by this method as it is only viewed as a
-	 * wrapper when it is the return class.
-	 */
-	/*[ENDIF]*/
-	static Class<?> unwrapPrimitive(Class<?> wrapperClass){
-		if (Integer.class == wrapperClass) { //I
-			return int.class;
-		}
-		if (Long.class == wrapperClass) { //J
-			return long.class;
-		}
-		if (Byte.class == wrapperClass) {	//B
-			return byte.class;
-		}
-		if (Character.class == wrapperClass) { //C
-			return char.class;
-		}
-		if (Double.class == wrapperClass) { //D
-			return double.class;
-		}
-		if (Float.class == wrapperClass) { //F
-			return float.class;
-		}
-		if (Short.class == wrapperClass) { //S
-			return short.class;
-		}
-		if (Boolean.class == wrapperClass) { //Z
-			return boolean.class;
-		}
-		return wrapperClass;
-	}
-	
-	static String getBytecodeStringName(Class<?> c){
-		if (c.isPrimitive()) {
-			if (c == int.class) {
-				return "I"; //$NON-NLS-1$
-			} else if (c == long.class) {
-				return "J"; //$NON-NLS-1$
-			} else if (c == byte.class) {
-				return "B"; //$NON-NLS-1$
-			} else if (c == boolean.class) {
-				return "Z"; //$NON-NLS-1$
-			} else if (c == void.class) {
-				return "V"; //$NON-NLS-1$
-			} else if (c == char.class) {
-				return "C"; //$NON-NLS-1$
-			} else if (c == double.class) {
-				return "D"; //$NON-NLS-1$
-			} else if (c == float.class) {
-				return "F"; //$NON-NLS-1$
-			} else if (c == short.class) {
-				return "S"; //$NON-NLS-1$
-			}
-		}
-		String name = c.getName().replace('.', '/');
-		if (c.isArray()) {
-			return name;
-		}
-		return "L"+ name + ";"; //$NON-NLS-1$ //$NON-NLS-2$
-	}
-	
+
 	/*
 	 * Implements JSR 292 serialization spec.
 	 * Write the MethodType without writing the field names.
@@ -1085,8 +987,13 @@ public final class MethodType implements Serializable {
 					}
 				}
 			);
-			fReturnType.set(this, in.readObject());
-			fArguments.set(this, in.readObject());
+			fReturnType.set(this, void.class);
+			fArguments.set(this, EMTPY_PARAMS);
+			methodDescriptor = "()V";
+			stackDescriptionBits = stackDescriptionBits(EMTPY_PARAMS, 0);
+			Class<?> serialReturnType = (Class<?>) in.readObject();
+			Class<?>[] serialArguments = (Class<?>[]) in.readObject();
+			deserializedFields = new DeserializedFieldsHolder(serialReturnType, serialArguments);
 		} catch (IllegalAccessException e) {
 		} catch (NoSuchFieldException e) {
 		}
@@ -1095,7 +1002,14 @@ public final class MethodType implements Serializable {
 	/* Hook to ensure that all objects go through the factory */
 	@SuppressWarnings("unused")
 	private Object readResolve() throws ObjectStreamException {
-		return MethodType.methodType(returnType, arguments);
+		Class<?> ret = void.class;
+		Class<?>[] args = EMTPY_PARAMS;
+		DeserializedFieldsHolder localArgs = deserializedFields;
+		if (localArgs != null) {
+			ret = deserializedFields.returnType;
+			args = deserializedFields.arguments;
+		}
+		return MethodType.methodType(ret, args);
 	}
 	
 	/*
@@ -1114,7 +1028,13 @@ public final class MethodType implements Serializable {
 		return invoker;
 	}
 	
-/*[IF Sidecar19-SE-OpenJ9]*/	
+/*[IF Java12]*/
+	static MethodType makeImpl(Class<?> rtype, Class<?>[] ptypes, boolean arg) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+/*[ENDIF]*/
+
+/*[IF Sidecar18-SE-OpenJ9]*/	
 	MethodType basicType() {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
@@ -1134,10 +1054,62 @@ public final class MethodType implements Serializable {
 	Class<?> rtype() {
 		return returnType;
 	}
-	
+
+/*[IF Sidecar19-SE-OpenJ9]*/	
 	MethodType asCollectorType(Class<?> clz, int num1, int num2) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
-/*[ENDIF]*/	
+
+	/*[IF Java10]*/
+	/**
+	 * Returns the number of stack slots used by the described args in the MethodType.
+	 * @return The number of stack slots
+	 */
+	int parameterSlotCount() {
+		return argSlots;
+	}
+	/*[ENDIF]*/	
+/*[ELSE]*/
+	MethodType asCollectorType(Class<?> clz, int num1) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+/*[ENDIF]*/
+/*[ENDIF]*/
+
+/*[IF Java12]*/
+	/**
+	 * Return field descriptor of MethodType instance.
+	 * 
+	 * @return field descriptor of MethodType instance
+	 */
+	public String descriptorString() {
+		return methodDescriptor;
+	}
+
+	/**
+	 * Returns the nominal descriptor of this MethodType instance, or an empty Optional 
+	 * if construction is not possible.
+	 * 
+	 * @return Optional with a nominal descriptor of MethodType instance
+	 */
+	public Optional<MethodTypeDesc> describeConstable() {
+		try {
+			ClassDesc returnDesc = returnType.describeConstable().orElseThrow();
+
+			/* convert parameter classes to ClassDesc */
+			final int argumentsLength = arguments.length;
+			ClassDesc[] paramDescs = new ClassDesc[argumentsLength];
+			for (int i = 0; i < argumentsLength; i++) {
+				paramDescs[i] = arguments[i].describeConstable().orElseThrow();
+			}
+
+			/* create MethodTypeDesc */
+			MethodTypeDesc typeDesc = MethodTypeDesc.of(returnDesc, paramDescs);
+			return Optional.of(typeDesc);
+		} catch(NoSuchElementException e) {
+			return Optional.empty();
+		}
+	}
+/*[ENDIF]*/
 }
 

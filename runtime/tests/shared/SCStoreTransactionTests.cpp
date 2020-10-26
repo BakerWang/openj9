@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 extern "C"
@@ -32,23 +32,8 @@ extern "C"
 
 #define TEST_PASS 0
 #define TEST_ERROR -1
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-IDATA
-testSCStoreTransaction(J9JavaVM* vm)
-{
-	const char * testName = "testSCStoreTransaction";
-	if (NULL == vm) {
-		/*vm is null*/
-		return TEST_ERROR;
-	}
-	PORT_ACCESS_FROM_JAVAVM(vm);
-
-	/*Note: we do this b/c test fails on realtime currently unless there is an existing cache*/
-	j9tty_printf(PORTLIB, "Skip these tests on realtime b/c cache is readonly\n", testName);
-	return TEST_PASS;
-}
-#else
+/* A size greater than the shared cache size (or softmx size if it is set) */
+#define ROMCLASS_LARGE_SIZE (70 * 1024 *1024)
 
 static IDATA AddClassToCacheHelper(J9VMThread* currentThread, J9ClassLoader* classloader, UDATA entryIndex, UDATA loadType, U_16 classnameLength, U_8 * classnameData, U_32 romclassSize);
 static IDATA test1(J9JavaVM* vm);
@@ -102,7 +87,7 @@ testSCStoreTransaction(J9JavaVM* vm)
 		return TEST_ERROR;
 	}
 
-	vm->internalVMFunctions->internalAcquireVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(vm->mainThread);
 	rc |= test1(vm);
 	rc |= test2(vm);
 	rc |= test3(vm);
@@ -127,7 +112,7 @@ testSCStoreTransaction(J9JavaVM* vm)
 	rc |= test22(vm);
 	
 
-	/*The tests below excercise the class debug area of the cache*/
+	/*The tests below exercise the class debug area of the cache*/
 	if (0 < ClassDebugDataProvider::getRecommendedPercentage()) {
 		rc |= test23(vm);
 		rc |= test24(vm);
@@ -139,7 +124,7 @@ testSCStoreTransaction(J9JavaVM* vm)
 		j9tty_printf(PORTLIB, "%s: Skipping some tests b/c the cache has class debug area size of 0 bytes.\n", testName);
 	}
 	
-	vm->internalVMFunctions->internalReleaseVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalExitVMToJNI(vm->mainThread);
 
 	j9tty_printf(PORTLIB, "%s: %s\n", testName, TEST_PASS==rc?"PASS":"FAIL");
 	if (rc == TEST_ERROR) {
@@ -1190,7 +1175,7 @@ test16(J9JavaVM* vm)
 	void * romclassmem = NULL;
 	const char * testName = "test16";
 	J9ROMClass * romclass = NULL;
-	U_32 romclassSize = 20971520;
+	U_32 romclassSize = ROMCLASS_LARGE_SIZE;
 	const char * romclassName = "CacheFilledTestClassNonOrphan";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	J9RomClassRequirements sizes;
@@ -1283,7 +1268,7 @@ test17(J9JavaVM* vm)
 	void * romclassmem = NULL;
 	const char * testName = "test17";
 	J9ROMClass * romclass = NULL;
-	U_32 romclassSize = 20971520;
+	U_32 romclassSize = ROMCLASS_LARGE_SIZE;
 	const char * romclassName = "CacheFilledTestClassOrphan";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	J9RomClassRequirements sizes;
@@ -1377,7 +1362,7 @@ test18(J9JavaVM* vm)
 	const char * testName = "test18";
 	J9ROMClass * romclass = NULL;
 	U_32 romclassSize = 1024;
-	U_32 romclassSizeLarge = 20971520;
+	U_32 romclassSizeLarge = ROMCLASS_LARGE_SIZE;
 	const char * romclassName = "NonOrphanClassCacheFilledTest";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	J9RomClassRequirements sizes;
@@ -1498,7 +1483,7 @@ test19(J9JavaVM* vm)
 	const char * testName = "test19";
 	J9ROMClass * romclass = NULL;
 	U_32 romclassSize = 1024;
-	U_32 romclassSizeLarge = 20971520;
+	U_32 romclassSizeLarge = ROMCLASS_LARGE_SIZE;
 	const char * romclassName = "CacheFilledMetadataUpdateClassOrphan";
 	const char * testclassName = "TestROMClass";
 	PORT_ACCESS_FROM_JAVAVM(vm);
@@ -1839,8 +1824,8 @@ test23(J9JavaVM* vm)
 		romclass->romSize = sizes.romClassMinimalSize;
 	}
 	
-	if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize)) {
-		ERRPRINTF("Allcoated memory doesn't appear to be in the cache\n");
+	if (FALSE == j9shr_Query_IsAddressInReadWriteCache(vm, romclassmem, sizes.romClassMinimalSize)) {
+		ERRPRINTF("Allocated memory doesn't appear to be in the cache\n");
 		retval = TEST_ERROR;
 		goto done;
 	}
@@ -1917,8 +1902,8 @@ test24(J9JavaVM* vm)
 		romclass->romSize = sizes.romClassMinimalSize;
 	}
 
-	if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize)) {
-		ERRPRINTF("Allcoated memory doesn't appear to be in the cache\n");
+	if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize, TRUE)) {
+		ERRPRINTF("Allocated memory doesn't appear to be in the cache\n");
 		retval = TEST_ERROR;
 		goto done;
 	}
@@ -2206,8 +2191,8 @@ test29(J9JavaVM* vm)
 			romclass->romSize = sizes.romClassMinimalSize;
 		}
 
-		if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize)) {
-			ERRPRINTF("Allcoated memory doesn't appear to be in the cache\n");
+		if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize, TRUE)) {
+			ERRPRINTF("Allocated memory doesn't appear to be in the cache\n");
 			retval = TEST_ERROR;
 			goto done;
 		}
@@ -2271,8 +2256,8 @@ test29(J9JavaVM* vm)
 			romclass->romSize = sizes.romClassMinimalSize;
 		}
 
-		if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize)) {
-			ERRPRINTF("Allcoated memory doesn't appear to be in the cache\n");
+		if (FALSE == j9shr_isAddressInCache(vm, romclassmem, sizes.romClassMinimalSize, TRUE)) {
+			ERRPRINTF("Allocated memory doesn't appear to be in the cache\n");
 			retval = TEST_ERROR;
 			goto done;
 		}
@@ -2312,5 +2297,3 @@ test29(J9JavaVM* vm)
 	done:
 	return retval;
 }
-
-#endif /*defined(J9SHR_CACHELET_SUPPORT)*/

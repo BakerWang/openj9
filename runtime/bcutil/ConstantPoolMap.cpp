@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2016 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 /*
  * ConstantPoolMap.cpp
@@ -45,20 +45,16 @@ ConstantPoolMap::ConstantPoolMap(BufferManager *bufferManager, ROMClassCreationC
 	_constantPoolEntries(NULL),
 	_romConstantPoolEntries(NULL),
 	_romConstantPoolTypes(NULL),
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	_staticSplitEntries(NULL),
 	_specialSplitEntries(NULL),
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 	_methodTypeCount(0),
 	_varHandleMethodTypeCount(0),
 	_varHandleMethodTypeLookupTable(NULL),
 	_callSiteCount(0),
 	_ramConstantPoolCount(0),
 	_romConstantPoolCount(0),
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	_staticSplitEntryCount(0),
 	_specialSplitEntryCount(0),
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 	_buildResult(OutOfMemory)
 {
 }
@@ -102,25 +98,16 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 		J9CPTYPE_CLASS,  /* CFR_CONSTANT_Class   */
 		J9CPTYPE_STRING, /* CFR_CONSTANT_String  */
 		J9CPTYPE_FIELD,  /* CFR_CONSTANT_Fieldref */
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 		J9CPTYPE_UNUSED, /* CFR_CONSTANT_Methodref */
-#else /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
-		J9CPTYPE_SHARED_METHOD, /* CFR_CONSTANT_Methodref */
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 		J9CPTYPE_INTERFACE_METHOD, /* CFR_CONSTANT_InterfaceMethodref */
 		J9CPTYPE_UNUSED, /* CFR_CONSTANT_NameAndType */
 		J9CPTYPE_UNUSED, /* 13 */
 		J9CPTYPE_UNUSED, /* 14 */
 		J9CPTYPE_METHODHANDLE, /* CFR_CONSTANT_MethodHandle */
 		J9CPTYPE_METHOD_TYPE, /* CFR_CONSTANT_MethodType */
-		J9CPTYPE_UNUSED, /* 17 */
+		J9CPTYPE_CONSTANT_DYNAMIC, /* CFR_CONSTANT_Dynamic */
 		J9CPTYPE_UNUSED, /* CFR_CONSTANT_InvokeDynamic */
 	};
-
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-	/* Assumes order: INVOKE_STATIC, INVOKE_VIRTUAL & INVOKE_SPECIAL, INVOKE_HANDLEEXACT & INVOKE_HANDLEGENERIC */
-	static const U_8 methodRefMap[3] = {J9CPTYPE_STATIC_METHOD, J9CPTYPE_INSTANCE_METHOD, J9CPTYPE_HANDLE_METHOD};
-#endif /* !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 	ROMClassVerbosePhase v(_context, ConstantPoolMapping, &_buildResult);
 
@@ -141,14 +128,12 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 					break;
 				case CFR_CONSTANT_InterfaceMethodref: /* fall through */
 				case CFR_CONSTANT_Methodref:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 					if (isStaticSplit(cfrCPIndex)) {
 						_staticSplitEntryCount += 1;
 					}
 					if (isSpecialSplit(cfrCPIndex)) {
 						_specialSplitEntryCount += 1;
 					}
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					/* fall through */
 				case CFR_CONSTANT_Fieldref: /* fall through */
 				case CFR_CONSTANT_Class:
@@ -158,6 +143,15 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 				case CFR_CONSTANT_MethodHandle: /* fall through */
 				case CFR_CONSTANT_MethodType:
 					singleSlotCount += 1;
+					break;
+				case CFR_CONSTANT_Dynamic:
+					if (isMarked(cfrCPIndex)) {
+						/*
+						 * All Constant Dynamic entries [ldc, ldc_w, ldc2w] are treated as single slot
+						 * to always have a RAM constantpool entry created
+						 */
+						singleSlotCount += 1;
+					}
 					break;
 				case CFR_CONSTANT_Utf8:
 					if (isMarked(cfrCPIndex, ANNOTATION)) {
@@ -190,17 +184,13 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 
 	_romConstantPoolEntries = (U_16 *) _bufferManager->alloc(_romConstantPoolCount * sizeof(U_16));
 	_romConstantPoolTypes = (U_8 *) _bufferManager->alloc(_romConstantPoolCount * sizeof(U_8));
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	_staticSplitEntries = (U_16 *) _bufferManager->alloc(_staticSplitEntryCount * sizeof(U_16));
 	_specialSplitEntries = (U_16 *) _bufferManager->alloc(_specialSplitEntryCount * sizeof(U_16));
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 	if ((NULL == _romConstantPoolEntries)
 		|| (NULL == _romConstantPoolTypes)
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 		|| (NULL == _staticSplitEntries)
 		|| (NULL == _specialSplitEntries)
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 	) {
 		_buildResult = OutOfMemory;
 		return;
@@ -211,10 +201,8 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 	U_16 romCPIndex = U_16(ldcCPIndex + ldcSlotCount);
 	U_16 doubleSlotIndex = _ramConstantPoolCount;
 	U_16 currentCallSiteIndex = 0;
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	U_16 staticSplitTableIndex = 0;
 	U_16 specialSplitTableIndex = 0;
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 	/*
 	 * Fill in entries, ignoring InvokeDynamic, Utf8 and NameAndType entries.
@@ -240,7 +228,6 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 					_romConstantPoolTypes[doubleSlotIndex] = cpTypeMap[cpTag];
 					SET_ROM_CP_INDEX(cfrCPIndex, 0, doubleSlotIndex++);
 					break;
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 				case CFR_CONSTANT_InterfaceMethodref: /* fall through */
 				case CFR_CONSTANT_Methodref: {
 					if (isStaticSplit(cfrCPIndex)) {
@@ -257,11 +244,20 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 					if (isMarked(cfrCPIndex, INVOKE_INTERFACE)) {
 						_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INTERFACE_METHOD;
 					} else if (isMarked(cfrCPIndex, INVOKE_SPECIAL)) {
-						_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INSTANCE_METHOD;
+						if (CFR_CONSTANT_InterfaceMethodref == cpTag) {
+							_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INTERFACE_INSTANCE_METHOD;
+						} else {
+							_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INSTANCE_METHOD;
+						}
 					} else if (isMarked(cfrCPIndex, INVOKE_HANDLEEXACT) || isMarked(cfrCPIndex, INVOKE_HANDLEGENERIC)) {
 						_romConstantPoolTypes[romCPIndex] = J9CPTYPE_HANDLE_METHOD;
 					} else if (isMarked(cfrCPIndex, INVOKE_STATIC)) {
-						_romConstantPoolTypes[romCPIndex] = J9CPTYPE_STATIC_METHOD;
+						if (CFR_CONSTANT_InterfaceMethodref == cpTag) {
+							_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INTERFACE_STATIC_METHOD;
+						} else {
+							_romConstantPoolTypes[romCPIndex] = J9CPTYPE_STATIC_METHOD;
+						}
+
 					} else if (isMarked(cfrCPIndex, INVOKE_VIRTUAL)) {
 						_romConstantPoolTypes[romCPIndex] = J9CPTYPE_INSTANCE_METHOD;
 					} else {
@@ -270,34 +266,14 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 					SET_ROM_CP_INDEX(cfrCPIndex, 0, romCPIndex++);
 					break;
 				}
-#else /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
-				case CFR_CONSTANT_Methodref: {
-					UDATA splitCount = 0;
-					UDATA splitIndex = 0;
-					for (UDATA i = 0; i < SPLIT_FLAG_COUNT; i++) {
-						if (isMarked(cfrCPIndex, i)) {
-							splitCount += 1;
-							splitIndex = i;
-						}
-					}
-					_romConstantPoolEntries[romCPIndex] = cfrCPIndex;
-					if (1 == splitCount) {
-						_romConstantPoolTypes[romCPIndex] = methodRefMap[splitIndex];
-					} else {
-						_romConstantPoolTypes[romCPIndex] = cpTypeMap[cpTag];
-					}
-					SET_ROM_CP_INDEX(cfrCPIndex, 0, romCPIndex++);
-					break;
-				}
-				case CFR_CONSTANT_InterfaceMethodref: /* fall through */
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 				case CFR_CONSTANT_Fieldref: /* fall through */
 				case CFR_CONSTANT_Class: /* fall through */
 				case CFR_CONSTANT_String: /* fall through */
 				case CFR_CONSTANT_Integer: /* fall through */
 				case CFR_CONSTANT_Float: /* fall through */
 				case CFR_CONSTANT_MethodHandle: /* fall through */
-				case CFR_CONSTANT_MethodType:
+				case CFR_CONSTANT_MethodType: /* fall through */
+				case CFR_CONSTANT_Dynamic:
 					_romConstantPoolEntries[romCPIndex] = cfrCPIndex;
 					_romConstantPoolTypes[romCPIndex] = cpTypeMap[cpTag];
 					SET_ROM_CP_INDEX(cfrCPIndex, 0, romCPIndex++);
@@ -326,6 +302,20 @@ ConstantPoolMap::computeConstantPoolMapAndSizes()
 			}
 		}
 	}
+
+	J9ClassPatchMap *map = _context->patchMap();
+
+	/**
+	 * If a valid patchMap structure is passed, this class requires ConstantPool patching.
+	 * Record the index mapping from Classfile to J9Class constantpool to allow patching
+	 * the RAM CP after it is created by VM.
+	 */
+	if (map != NULL) {
+		Trc_BCU_Assert_Equals(map->size, cfrCPCount);
+		for (U_16 cfrCPIndex = 0; cfrCPIndex < cfrCPCount; cfrCPIndex++) {
+			map->indexMap[cfrCPIndex] = _constantPoolEntries[cfrCPIndex].romCPIndex;
+		}
+	}
 }
 
 bool
@@ -334,93 +324,106 @@ ConstantPoolMap::isVarHandleMethod(U_32 classIndex, U_32 nasIndex) {
 	U_16 classNameLength = _classFileOracle->getUTF8Length(getCPSlot1(classIndex));
 
 	if ((sizeof(VARHANDLE_CLASS_NAME) - 1) == classNameLength) {
-		const char *classNameData = (const char *)_classFileOracle->getUTF8Data(getCPSlot1(classIndex));
-		if (0 == strcmp(classNameData, VARHANDLE_CLASS_NAME)) {
+		const U_8 *classNameData = _classFileOracle->getUTF8Data(getCPSlot1(classIndex));
+		if (0 == memcmp(classNameData, VARHANDLE_CLASS_NAME, classNameLength)) {
 			U_32 methodNameIndex = getCPSlot1(nasIndex);
 			U_16 methodNameLength = _classFileOracle->getUTF8Length(methodNameIndex);
-			const char *methodNameData = (const char *)_classFileOracle->getUTF8Data(methodNameIndex);
+			const U_8 *methodNameData = _classFileOracle->getUTF8Data(methodNameIndex);
 
 			switch (methodNameLength) {
 			case 3:
-				if ((0 == strcmp(methodNameData, "get"))
-				 || (0 == strcmp(methodNameData, "set"))
+				if ((0 == memcmp(methodNameData, "get", methodNameLength))
+				 || (0 == memcmp(methodNameData, "set", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
 			case 9:
-				if ((0 == strcmp(methodNameData, "getOpaque"))
-				 || (0 == strcmp(methodNameData, "setOpaque"))
-				 || (0 == strcmp(methodNameData, "getAndSet"))
-				 || (0 == strcmp(methodNameData, "getAndAdd"))
+				if ((0 == memcmp(methodNameData, "getOpaque", methodNameLength))
+				 || (0 == memcmp(methodNameData, "setOpaque", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndSet", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndAdd", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
 			case 10:
-				if ((0 == strcmp(methodNameData, "getAcquire"))
-				 || (0 == strcmp(methodNameData, "setRelease"))
+				if ((0 == memcmp(methodNameData, "getAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "setRelease", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
 			case 11:
-				if ((0 == strcmp(methodNameData, "getVolatile"))
-				 || (0 == strcmp(methodNameData, "setVolatile"))
+				if ((0 == memcmp(methodNameData, "getVolatile", methodNameLength))
+				 || (0 == memcmp(methodNameData, "setVolatile", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
+			case 13:
+				if (0 == memcmp(methodNameData, "compareAndSet", methodNameLength)) {
+					result = true;
+				}
+				break;
+			case 15:
+				if (0 == memcmp(methodNameData, "getAndBitwiseOr", methodNameLength)) {
+					result = true;
+				}
+				break;
 			case 16:
-				if ((0 == strcmp(methodNameData, "getAndSetAcquire"))
-				 || (0 == strcmp(methodNameData, "getAndSetRelease"))
-				 || (0 == strcmp(methodNameData, "getAndAddAcquire"))
-				 || (0 == strcmp(methodNameData, "getAndAddRelease"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseAnd"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseXor"))
+				if ((0 == memcmp(methodNameData, "getAndSetAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndSetRelease", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndAddAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndAddRelease", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseAnd", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseXor", methodNameLength))
 				) {
 					result = TRUE;
 				}
 				break;
+			case 17:
+				if (0 == memcmp(methodNameData, "weakCompareAndSet", methodNameLength)) {
+					result = true;
+				}
+				break;
+			case 18:
+				if (0 == memcmp(methodNameData, "compareAndExchange", methodNameLength)) {
+					result = true;
+				}
+				break;
 			case 22:
-				if ((0 == strcmp(methodNameData, "getAndBitwiseOrAcquire"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseOrRelease"))
-				 || (0 == strcmp(methodNameData, "weakCompareAndSetPlain"))
+				if ((0 == memcmp(methodNameData, "getAndBitwiseOrAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseOrRelease", methodNameLength))
+				 || (0 == memcmp(methodNameData, "weakCompareAndSetPlain", methodNameLength))
 				) {
 					result = TRUE;
 				}
 				break;
 			case 23:
-				if ((0 == strcmp(methodNameData, "getAndBitwiseAndAcquire"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseAndRelease"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseXorAcquire"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseXorRelease"))
+				if ((0 == memcmp(methodNameData, "getAndBitwiseAndAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseAndRelease", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseXorAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "getAndBitwiseXorRelease", methodNameLength))
 				) {
 					result = TRUE;
 				}
 				break;
 			case 24:
-				if ((0 == strcmp(methodNameData, "weakCompareAndSetAcquire"))
-				 || (0 == strcmp(methodNameData, "weakCompareAndSetRelease"))
+				if ((0 == memcmp(methodNameData, "weakCompareAndSetAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "weakCompareAndSetRelease", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
 			case 25:
-				if ((0 == strcmp(methodNameData, "compareAndExchangeAcquire"))
-				 || (0 == strcmp(methodNameData, "compareAndExchangeRelease"))
+				if ((0 == memcmp(methodNameData, "compareAndExchangeAcquire", methodNameLength))
+				 || (0 == memcmp(methodNameData, "compareAndExchangeRelease", methodNameLength))
 				) {
 					result = true;
 				}
 				break;
 			default:
-				if ((0 == strcmp(methodNameData, "compareAndSet"))
-				 || (0 == strcmp(methodNameData, "getAndBitwiseOr"))
-				 || (0 == strcmp(methodNameData, "weakCompareAndSet"))
-				 || (0 == strcmp(methodNameData, "compareAndExchange"))
-				) {
-					result = true;
-				}
 				break;
 			}
 		}
@@ -435,7 +438,9 @@ ConstantPoolMap::findVarHandleMethodRefs()
 	U_16 *varHandleMethodTable = NULL;
 
 	for (U_16 i = 1; i < _romConstantPoolCount; i++) {
-		if  (J9CPTYPE_INSTANCE_METHOD == _romConstantPoolTypes[i]) {
+		if ((J9CPTYPE_INSTANCE_METHOD == _romConstantPoolTypes[i])
+		|| (J9CPTYPE_INTERFACE_INSTANCE_METHOD == _romConstantPoolTypes[i])
+		) {
 			U_16 cfrCPIndex = _romConstantPoolEntries[i];
 			U_32 slot1 = getCPSlot1(cfrCPIndex);
 			U_32 slot2 = getCPSlot2(cfrCPIndex);
@@ -499,13 +504,12 @@ ConstantPoolMap::constantPoolDo(ConstantPoolVisitor *visitor)
 				visitor->visitString(cfrCPIndex);
 				break;
 			case J9CPTYPE_FIELD: /* fall through */
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-			case J9CPTYPE_SHARED_METHOD: /* fall through */
-#endif /* !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			case J9CPTYPE_INSTANCE_METHOD: /* fall through */
 			case J9CPTYPE_HANDLE_METHOD: /* fall through */
 			case J9CPTYPE_STATIC_METHOD: /* fall through */
-			case J9CPTYPE_INTERFACE_METHOD:
+			case J9CPTYPE_INTERFACE_METHOD: /* fall through */
+			case J9CPTYPE_INTERFACE_INSTANCE_METHOD: /* fall through */
+			case J9CPTYPE_INTERFACE_STATIC_METHOD:
 				visitor->visitFieldOrMethod(getROMClassCPIndexForReference(slot1), U_16(slot2));
 				break;
 			case J9CPTYPE_METHOD_TYPE:
@@ -524,6 +528,44 @@ ConstantPoolMap::constantPoolDo(ConstantPoolVisitor *visitor)
 				break;
 			case J9CPTYPE_METHODHANDLE:
 				visitor->visitMethodHandle(slot1, slot2);
+				break;
+			case J9CPTYPE_CONSTANT_DYNAMIC:
+				/* Check if the return type of constant dynamic entry is a primitive type
+				 * Set the J9DescriptionCpPrimitiveType flag so interpreter know to unbox
+				 * the resolved object before returning it.
+				 */
+				{
+					char fieldDescriptor = (char)*_classFileOracle->getUTF8Data(getCPSlot2(slot2));
+					switch (fieldDescriptor) {
+					case 'B':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeByte << J9DescriptionReturnTypeShift));
+						break;
+					case 'C':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeChar << J9DescriptionReturnTypeShift));
+						break;
+					case 'D':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeDouble << J9DescriptionReturnTypeShift));
+						break;
+					case 'F':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeFloat << J9DescriptionReturnTypeShift));
+						break;
+					case 'I':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeInt << J9DescriptionReturnTypeShift));
+						break;
+					case 'J':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeLong << J9DescriptionReturnTypeShift));
+						break;
+					case 'S':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeShort << J9DescriptionReturnTypeShift));
+						break;
+					case 'Z':
+						visitor->visitConstantDynamic(slot1, slot2, (J9DescriptionReturnTypeBoolean << J9DescriptionReturnTypeShift));
+						break;
+					default:
+						visitor->visitConstantDynamic(slot1, slot2, 0);
+						break;
+					}
+				}
 				break;
 			default:
 				Trc_BCU_Assert_ShouldNeverHappen();

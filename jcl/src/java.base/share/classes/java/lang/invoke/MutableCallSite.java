@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar17]*/
+/*[INCLUDE-IF Sidecar17 & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2011, 2017 IBM Corp. and others
+ * Copyright (c) 2011, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +18,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
@@ -27,6 +27,8 @@ import jdk.internal.ref.Cleaner;
 /*[ELSE]*/
 import sun.misc.Cleaner;
 /*[ENDIF]*/
+
+import static java.lang.invoke.MethodHandleResolver.UNSAFE;
 
 /**
  * A MutableCallSite acts as though its target MethodHandle were a normal variable.
@@ -54,7 +56,7 @@ public class MutableCallSite extends CallSite {
 	private static final long targetFieldOffset = initializeTargetFieldOffset();
 	private static long initializeTargetFieldOffset(){
 		try{
-			return MethodHandle.getUnsafe().objectFieldOffset(MutableCallSite.class.getDeclaredField("target")); //$NON-NLS-1$
+			return UNSAFE.objectFieldOffset(MutableCallSite.class.getDeclaredField("target")); //$NON-NLS-1$
 		} catch (Exception e) {
 			InternalError ie = new InternalError();
 			ie.initCause(e);
@@ -71,7 +73,7 @@ public class MutableCallSite extends CallSite {
 	
 	/**
 	 * Create a MutableCallSite permanently set to the same type as the <i>mutableTarget</i> and using
-	 * the mutableTarget</i> as the initial target value.
+	 * the <i>mutableTarget</i> as the initial target value.
 	 * 
 	 * @param mutableTarget - the initial target of the CallSite
 	 * @throws NullPointerException - if the <i>mutableTarget</i> is null.
@@ -119,7 +121,7 @@ public class MutableCallSite extends CallSite {
 	private static final Object bypassBase = initializeBypassBase();
 	private static Object initializeBypassBase() {
 		try{
-			return MethodHandle.getUnsafe().staticFieldBase(MutableCallSite.class.getDeclaredField("targetFieldOffset")); //$NON-NLS-1$
+			return UNSAFE.staticFieldBase(MutableCallSite.class.getDeclaredField("targetFieldOffset")); //$NON-NLS-1$
 		} catch (Exception e) {
 			InternalError ie = new InternalError();
 			ie.initCause(e);
@@ -143,7 +145,7 @@ public class MutableCallSite extends CallSite {
 			 * target.  We use equivalenceCounter and equivalenceInterval to limit how often we
 			 * check structural equivalence.  If new targets are equivalent, then it is worthwhile
 			 * to always do the check.  Once they start being different, than we start to back off
-			 * on how frequently we check as the check itself must walk the two handle graphes and 
+			 * on how frequently we check as the check itself must walk the two handle graphs and 
 			 * this is expensive.
 			 *
 			 * It is important that every path in here sets this.target exactly once, or else we
@@ -159,10 +161,10 @@ public class MutableCallSite extends CallSite {
 				if (StructuralComparator.get().handlesAreEquivalent(oldTarget, newTarget)) {
 					// Equivalence check saved us a thaw, so it's worth doing them every time.
 					equivalenceInterval = 1;
-/*[IF Sidecar19-SE-B174]*/				
-					MethodHandle.getUnsafe().compareAndSetObject(this, targetFieldOffset, oldTarget, newTarget);
+/*[IF Sidecar19-SE-OpenJ9]*/				
+					UNSAFE.compareAndSetObject(this, targetFieldOffset, oldTarget, newTarget);
 /*[ELSE]
-					MethodHandle.getUnsafe().compareAndSwapObject(this, targetFieldOffset, oldTarget, newTarget);
+					UNSAFE.compareAndSwapObject(this, targetFieldOffset, oldTarget, newTarget);
 /*[ENDIF]*/					
 				} else {
 					thaw(oldTarget, newTarget);
@@ -175,7 +177,7 @@ public class MutableCallSite extends CallSite {
 				thaw(oldTarget, newTarget);
 			}
 			if (globalRefCleaner.bypassOffset != 0) {
-				MethodHandle.getUnsafe().putObject(bypassBase, globalRefCleaner.bypassOffset, newTarget);
+				UNSAFE.putObject(bypassBase, globalRefCleaner.bypassOffset, newTarget);
 			}
 		}
 	}

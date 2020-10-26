@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2014, 2014 IBM Corp. and others
+ * Copyright (c) 2014, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -82,7 +82,7 @@ j9ri_rioff(void)
 /**
  * This is the signalHandler for the real-time RI signal.
  * The real-time signal is sent to the thread if the run-time instrumentation buffer is full,(ENOBUFS == siginfo->si_int ),
- * or if the runtime-instrumentation-halted interrupt occurrs.
+ * or if the runtime-instrumentation-halted interrupt occurs.
  * This is a dummy signalHandler because the JIT polls for buffer full by itself.
  */
 static void
@@ -104,12 +104,13 @@ j9ri_params_init(struct J9PortLibrary *portLibrary, struct J9RIParameters *riPar
 
 /**
  * Register a signalHandler for RI real-time signals
- * This is called once from the JIT during TR_J9VM::initializeS390zLinuxProcessorFeatures.
+ * This is called once from the JIT during J9::Z::CPU::customize().
  * If the registration fails, RI will not be used.
  */
 int32_t
 j9ri_enableRISupport(struct J9PortLibrary *portLibrary)
 {
+#if !defined(J9ZTPF)
 	struct sigaction sig;
 	Trc_PRT_ri_enableSupport_Entry();
 	memset(&sig, 0, sizeof(sig));
@@ -140,6 +141,11 @@ j9ri_enableRISupport(struct J9PortLibrary *portLibrary)
 
 	Trc_PRT_ri_enableSupport_Exit();
 	return 0;
+#else /* !defined(J9ZTPF) */
+	Trc_PRT_ri_enableSupport_Entry();
+	Trc_PRT_ri_enableSupport_Exit();
+	return -1;
+#endif /* !defined(J9ZTPF) */
 }
 
 /**
@@ -165,6 +171,7 @@ j9ri_initialize(struct J9PortLibrary *portLibrary, struct J9RIParameters *riPara
 	int32_t ret_code = -1;
 	Trc_PRT_ri_initialize_Entry();
 
+#if !defined(J9ZTPF)
 	/*
 	 * syscall is s390_runtime_instr
 	 * errno values from syscall routine is as follows:
@@ -179,6 +186,7 @@ j9ri_initialize(struct J9PortLibrary *portLibrary, struct J9RIParameters *riPara
 	} else {
 		Trc_PRT_ri_initialize_Exception(errno);
 	}
+#endif /* !defined(J9ZTPF) */
 	Trc_PRT_ri_initialize_Exit();
 }
 
@@ -188,6 +196,7 @@ j9ri_deinitialize(struct J9PortLibrary *portLibrary, struct J9RIParameters *riPa
 	int32_t ret_code = -1;
 	Trc_PRT_ri_deinitialize_Entry();
 
+#if !defined(J9ZTPF)
 	/*
 	 * errno values from syscall routine is as follows:
 	 * EOPNOTSUPP -  RI facility is not available
@@ -199,6 +208,7 @@ j9ri_deinitialize(struct J9PortLibrary *portLibrary, struct J9RIParameters *riPa
 	} else {
 		Trc_PRT_ri_deinitialize_Exception(errno);
 	}
+#endif /* !defined(J9ZTPF) */
 	Trc_PRT_ri_deinitialize_Exit();
 }
 
@@ -212,7 +222,7 @@ j9ri_enable(struct J9PortLibrary *portLibrary, struct J9RIParameters *riParams)
 		/*
 		 * ret_code values from RION routine is as follows:
 		 * 0x0  - authorization routine successful.
-		 * 0x1  - RION failure - Not initalized or bad RI control block
+		 * 0x1  - RION failure - Not initialized or bad RI control block
 		 */
 		int32_t ret_code = j9ri_rion();
 		if (0 == ret_code) {
@@ -238,7 +248,7 @@ j9ri_disable(struct J9PortLibrary *portLibrary, struct J9RIParameters *riParams)
 		/*
 		 * ret_code values from RIOFF routine is as follows:
 		 * 0x0  - authorization routine successful.
-		 * 0x1  - RIOFF failure - Not initalized or bad RI control block
+		 * 0x1  - RIOFF failure - Not initialized or bad RI control block
 		 */
 		int32_t ret_code = j9ri_rioff();
 		if (0 == ret_code) {

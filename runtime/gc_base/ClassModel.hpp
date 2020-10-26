@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -93,7 +92,7 @@ public:
 	 */
 	MMINLINE static bool usesSharedITable(J9JavaVM *javaVM, J9Class *clazzPtr)
 	{
-		return (clazzPtr->romClass->modifiers & J9_JAVA_CLASS_ARRAY) && (clazzPtr != javaVM->booleanArrayClass);
+		return (clazzPtr->romClass->modifiers & J9AccClassArray) && (clazzPtr != javaVM->booleanArrayClass);
 	}
 
 	/**
@@ -109,13 +108,14 @@ public:
 	/**
 	 * Calculate the number of object slots in the class.
 	 * @param[in] clazz Pointer to the class
+	 * @param[in] vm The J9JavaVM
 	 * @return number of object slots.
 	 */
 	MMINLINE static UDATA
-	getNumberOfObjectSlots(J9Class *clazz)
+	getNumberOfObjectSlots(J9Class *clazz, J9JavaVM *vm)
 	{
 		UDATA totalInstanceSize = clazz->totalInstanceSize;
-		IDATA scanLimit = (IDATA) (totalInstanceSize / sizeof(fj9object_t));
+		IDATA scanLimit = (IDATA) (totalInstanceSize / J9JAVAVM_REFERENCE_SIZE(vm));
 		UDATA tempDescription = (UDATA)clazz->instanceDescription;
 
 		UDATA slotCount = 0;

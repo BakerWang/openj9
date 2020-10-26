@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2016 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,14 +17,14 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 #include "shrinit.h"
-#include "verbose.h"
+#include "verbose_api.h"
 #include "j2sever.h"
 #include "ut_j9shr.h"
 #ifdef __cplusplus
@@ -311,6 +311,15 @@ j9shr_classStoreTransaction_hasSharedStringTableLock(void * tobj)
 	return FALSE;
 }
 
+void 
+j9shr_classStoreTransaction_updateUnstoredBytes(U_32 romClassSizeFullSize, void * tobj)
+{
+	J9SharedClassTransaction * obj = (J9SharedClassTransaction *) tobj;
+	J9SharedClassConfig * sconfig = obj->ownerThread->javaVM->sharedClassConfig;
+	SH_CacheMap* cachemap = (SH_CacheMap*) (sconfig->sharedClassCache);
+	cachemap->increaseTransactionUnstoredBytes(romClassSizeFullSize, obj);
+}
+
 /**
  * Start a transaction to store a shared class
  *
@@ -328,7 +337,7 @@ j9shr_classStoreTransaction_hasSharedStringTableLock(void * tobj)
  * THREADING: On success this function will acquire 3 locks:
  * 	- JVM: 				segment mutex
  *  - shared classes: 	string table mutex (if not readonly)
- *  - shared classes: 	write mutex (if not readonly)
+ *  - shared classes: 	write mutex (if not readonly, if cache is not full)
  */
 IDATA
 j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9ClassLoader* classloader, J9ClassPathEntry* classPathEntries, UDATA cpEntryCount, UDATA entryIndex, UDATA loadType, const J9UTF8* partition, U_16 classnameLength, U_8 * classnameData, BOOLEAN isModifiedClassfile, BOOLEAN takeReadWriteLock)
@@ -424,6 +433,7 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 	obj->findNextRomClass = NULL;
 	obj->isModifiedClassfile = ((isModifiedClassfile == TRUE)?1:0);
 	obj->takeReadWriteLock = ((takeReadWriteLock==TRUE)?1:0);
+	obj->cacheFullFlags = 0;
 
 	/*NOTE:
 	 * Must omrthread_monitor_enter(segmentMutex) before enterWriteMutex(). Otherwise we will deadlock with hookFindSharedClass()
@@ -435,7 +445,6 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 	}
 
 	obj->transactionState = TSTATE_ENTER_SEGMENTMUTEX;
-
 
 	if (sconfig->classnameFilterPool) {
 		if (checkForStoreFilter(vm, classloader, (const char*) classnameData, (UDATA)classnameLength, sconfig->classnameFilterPool)) {
@@ -468,12 +477,14 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 
 	modContext = sconfig->modContext;
 
-	if (classloader != NULL) {
+	if ((classloader != NULL)
+		&& (J9SHR_LOADTYPE_NOT_FROM_PATH != loadType) /* no need to set classpath if loadType is J9SHR_LOADTYPE_NOT_FROM_PATH */
+	) {
 		/* default values for bootstrap: */
 		IDATA helperID = 0;
 		U_16 cpType = CP_TYPE_CLASSPATH;
 
-		if ((J2SE_VERSION(vm) >= J2SE_19)
+		if ((J2SE_VERSION(vm) >= J2SE_V11)
 			|| ((NULL != classPathEntries) && (-1 != obj->entryIndex))
 		) {
 			/* For class loaded from modules that entryIndex is -1. classPathEntries can be NULL. */
@@ -488,13 +499,14 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 			/* Bootstrap loader does not provide meaningful extraInfo */
 			if (!classpath && !infoFound) {
 				UDATA pathEntryCount = cpEntryCount;
-				if (!(localRuntimeFlags & J9SHR_RUNTIMEFLAG_ENABLE_CACHEBOOTCLASSES)) {
-					/* User specified noBootclasspath - do not continue */
-					retval = -1;
-					goto done;
-				}
-				if (J2SE_VERSION(vm) >= J2SE_19) {
+
+				if (J2SE_VERSION(vm) >= J2SE_V11) {
 					if (classloader == vm->systemClassLoader) {
+						if (J9_ARE_NO_BITS_SET(localRuntimeFlags, J9SHR_RUNTIMEFLAG_ENABLE_CACHEBOOTCLASSES)) {
+							/* User specified noBootclasspath - do not continue */
+							retval = -1;
+							goto done;
+						}
 						/* bootstrap loader searched on path: modulePath:classPathEntries, entryIndex is the index of classPathEntries if loaded from classPathEntries
 						 * or -1 if loaded from modules, so add 1 here */
 						obj->entryIndex += 1;
@@ -502,6 +514,11 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 						classpath = getBootstrapClasspathItem(currentThread, vm->modulesPathEntry, pathEntryCount);
 					}
 				} else {
+					if (J9_ARE_NO_BITS_SET(localRuntimeFlags, J9SHR_RUNTIMEFLAG_ENABLE_CACHEBOOTCLASSES)) {
+						/* User specified noBootclasspath - do not continue */
+						retval = -1;
+						goto done;
+					}
 					classpath = getBootstrapClasspathItem(currentThread, classPathEntries, pathEntryCount);
 				}
 			}
@@ -517,6 +534,21 @@ j9shr_classStoreTransaction_start(void * tobj, J9VMThread* currentThread, J9Clas
 				}
 			}
 		}
+	}
+	
+	if (J9_ARE_ALL_BITS_SET(localRuntimeFlags, J9SHR_RUNTIMEFLAG_BLOCK_SPACE_FULL)) {
+		obj->cacheFullFlags |= J9SHR_RUNTIMEFLAG_BLOCK_SPACE_FULL;
+		Trc_SHR_API_j9shr_classStoreTransaction_start_cacheFull_Event(currentThread);
+	} else if (J9_ARE_ALL_BITS_SET(localRuntimeFlags, J9SHR_RUNTIMEFLAG_AVAILABLE_SPACE_FULL)) {
+		obj->cacheFullFlags |= J9SHR_RUNTIMEFLAG_AVAILABLE_SPACE_FULL;
+		Trc_SHR_API_j9shr_classStoreTransaction_start_cacheSoftFull_Event(currentThread);
+	}
+
+	if (0 != obj->cacheFullFlags) {
+		obj->ClasspathWrapper = (void *) classpath;
+		obj->helperID = ((NULL == classpath) ? -1 : classpath->getHelperID());
+		/* let retVal to be 0 */
+		goto done;
 	}
 
 	/*Take a write mutex on the shared cache. This will be released in when the transaction is stopped.*/
@@ -597,24 +629,31 @@ IDATA
 j9shr_classStoreTransaction_stop(void * tobj)
 {
 	IDATA retval = SCCLASS_STORE_STOP_NOTHING_STORED;
-	const char * fname = "j9shr_classStoreTransaction_stop";
-	J9SharedClassTransaction * obj = (J9SharedClassTransaction *) tobj;
-	J9VMThread* currentThread = obj->ownerThread;
+	const char *fname = "j9shr_classStoreTransaction_stop";
+	J9SharedClassTransaction *obj = (J9SharedClassTransaction *)tobj;
+	J9VMThread *currentThread = obj->ownerThread;
 	J9JavaVM *vm = currentThread->javaVM;
-	J9SharedClassConfig * sconfig = vm->sharedClassConfig;
-	SH_CacheMap* cachemap = (SH_CacheMap*) (sconfig->sharedClassCache);
+	J9SharedClassConfig *sconfig = vm->sharedClassConfig;
+	SH_CacheMap *cachemap = (SH_CacheMap *)sconfig->sharedClassCache;
 	bool releaseWriteMutex;
 	bool releaseReadWriteMutex;
 	bool releaseSegmentMutex;
 	UDATA oldVMState = obj->oldVMState;
-	ClasspathWrapper* cpw = (ClasspathWrapper*) obj->ClasspathWrapper;
+	ClasspathWrapper *cpw = NULL;
+	ClasspathItem *classpath = NULL;
 	IDATA didWeStore = 0;
 	bool modifiedNoContext = ((obj->isModifiedClassfile == 1) && (NULL == obj->modContextInCache));
-	J9ROMClass * storedClass = NULL;
-	J9UTF8 * storedClassName = NULL;
-	J9SharedInvariantInternTable* table = currentThread->javaVM->sharedInvariantInternTable;
+	J9ROMClass *storedClass = NULL;
+	J9UTF8 *storedClassName = NULL;
+	J9SharedInvariantInternTable *table = currentThread->javaVM->sharedInvariantInternTable;
 
 	Trc_SHR_API_j9shr_classStoreTransaction_stop_Entry(currentThread, obj->transactionState);
+	
+	if (0 != obj->cacheFullFlags) {
+		classpath = (ClasspathItem*) obj->ClasspathWrapper;
+	} else {
+		cpw = (ClasspathWrapper*) obj->ClasspathWrapper;
+	}
 
 	/*if started go to done ...*/
 	if (obj->transactionState == TSTATE_STARTED) {	
@@ -681,16 +720,25 @@ j9shr_classStoreTransaction_stop(void * tobj)
 			if (NULL != storedClass) {
 				U_8 *intermediateClassData = J9ROMCLASS_INTERMEDIATECLASSDATA(storedClass);
 				if (NULL != intermediateClassData) {
-					Trc_SHR_Assert_True(j9shr_isAddressInCache(vm, intermediateClassData, storedClass->intermediateClassDataLength));
+					if (j9shr_isAddressInCache(vm, storedClass, storedClass->romSize, TRUE)) {
+						/* romclass is using SPRs pointing to its intermediateClassData, so they should be in the same cache */
+						Trc_SHR_Assert_True(j9shr_isAddressInCache(vm, intermediateClassData, storedClass->intermediateClassDataLength, TRUE));
+					} else {
+						Trc_SHR_Assert_True(j9shr_isAddressInCache(vm, intermediateClassData, storedClass->intermediateClassDataLength, FALSE));
+					}
 				}
 			}
 		}
 	}
 
 	/* Display verbose store messages.*/
-	if (cpw != NULL) {
-		ClasspathItem * classpath = ((ClasspathItem*) CPWDATA(cpw));
+	if (classpath != NULL) {
 		storeClassVerboseIO(obj->ownerThread, classpath, obj->entryIndex, obj->classnameLength, obj->classnameData, obj->helperID, (didWeStore == 1));
+	} else {
+		if (cpw != NULL) {
+			ClasspathItem * classpath = ((ClasspathItem*) CPWDATA(cpw));
+			storeClassVerboseIO(obj->ownerThread, classpath, obj->entryIndex, obj->classnameLength, obj->classnameData, obj->helperID, (didWeStore == 1));
+		}
 	}
 
 	/*Clear the transaction object*/
@@ -747,7 +795,7 @@ j9shr_classStoreTransaction_stop(void * tobj)
  *
  * THREADING: Must own (in atleast read only form):
  * 	- JVM: 				segment mutex
- *  - shared classes: 	write mutex (if not readonly)
+ *  - shared classes: 	write mutex (if not readonly, if cache is not full)
  */
 J9ROMClass *
 j9shr_classStoreTransaction_nextSharedClassForCompare(void * tobj)
@@ -759,13 +807,23 @@ j9shr_classStoreTransaction_nextSharedClassForCompare(void * tobj)
 
 	Trc_SHR_API_j9shr_nextSharedClassForCompare_Entry(currentThread);
 
-	if (obj->transactionState != TSTATE_ENTER_WRITEMUTEX) {
+	if ((obj->transactionState != TSTATE_ENTER_WRITEMUTEX)
+		&& (0 == obj->cacheFullFlags)
+	) {
 		Trc_SHR_API_j9shr_nextSharedClassForCompare_NotStarted_Event(currentThread, obj->transactionState);
 		Trc_SHR_API_j9shr_nextSharedClassForCompare_Exit(currentThread);
 		return NULL;
 	}
 
-	obj->findNextRomClass = (J9ROMClass *) cachemap->findNextROMClass(currentThread, obj->findNextIterator, obj->firstFound, obj->classnameLength, (const char*)obj->classnameData);
+	const char *stringBytes = (const char*)obj->classnameData;
+	U_16 stringLength = obj->classnameLength;
+
+	char *end = getLastDollarSignOfLambdaClassName(stringBytes, obj->classnameLength);
+	if (NULL != end) {
+		stringLength = (U_16)(end - stringBytes + 1);
+	}
+
+	obj->findNextRomClass = (J9ROMClass *) cachemap->findNextROMClass(currentThread, obj->findNextIterator, obj->firstFound, stringLength, (const char*)obj->classnameData);
 
 	Trc_SHR_API_j9shr_nextSharedClassForCompare_Exit(currentThread);
 	return (J9ROMClass *)(obj->findNextRomClass);
@@ -837,16 +895,16 @@ j9shr_classStoreTransaction_createSharedClass(void * tobj, const J9RomClassRequi
 	
 	/*ROM Class size must be doubled aligned*/
 	if (0 != (sizes->romClassSizeFullSize & (sizeof(U_64) - 1))) {
-		Trc_SHR_Assert_True(0 != (sizes->romClassSizeFullSize & (sizeof(U_64) - 1)));
 		Trc_SHR_API_j9shr_createSharedClass_DblAlign_Event(currentThread);
+		Trc_SHR_Assert_ShouldNeverHappen();
 		retval = -1;
 		goto done;
 	}
 
 	/*ROM Class size must be doubled aligned*/
 	if (0 != (sizes->romClassMinimalSize & (sizeof(U_64) - 1))) {
-		Trc_SHR_Assert_True(0 != (sizes->romClassMinimalSize & (sizeof(U_64) - 1)));
 		Trc_SHR_API_j9shr_createSharedClass_DblAlign_Event(currentThread);
+		Trc_SHR_Assert_ShouldNeverHappen();
 		retval = -1;
 		goto done;
 	}
@@ -986,7 +1044,7 @@ j9shr_classStoreTransaction_updateSharedClassSize(void * tobj, U_32 sizeUsed)
 }
 
 /**
- * Called by JCL natives, this function updates the metadtata (e.g. classpath info) for a shared ROMClass.
+ * Called by JCL natives, this function updates the metadata (e.g. classpath info) for a shared ROMClass.
  *
  * @param [in] currentThread thread calling this function
  * @param [in] classloader

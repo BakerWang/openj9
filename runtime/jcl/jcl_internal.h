@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 /* Prototypes and types required by the JCL module */
 
@@ -66,6 +66,17 @@ jbyteArray getMethodTypeAnnotationsAsByteArray(JNIEnv *env, jobject jlrMethod);
 j9object_t getMethodDefaultAnnotationData(struct J9VMThread *vmThread, struct J9Class *declaringClass, J9Method *ramMethod);
 
 jobjectArray getMethodParametersAsArray(JNIEnv *env, jobject jlrMethod);
+
+/**
+ * The caller must have VM access. 
+ * Build a java.lang.reflect.Field object for a field specified with a name and a declaring class.
+ * @param[in] vmThread The current vmThread.
+ * @param[in] declaringClass The declaring class. Must be non-null.
+ * @param[in] fieldName The name of the field.
+ * @return j9object_t a java.lang.reflect.Field
+ */
+j9object_t
+getFieldObjHelper(J9VMThread *vmThread, jclass declaringClass, jstring fieldName);
 
 /**
  * Build a java.lang.reflect.Field for a specified declared field.
@@ -119,6 +130,30 @@ getFieldsHelper(JNIEnv *env, jobject cls);
 J9Class *
 fetchArrayClass(struct J9VMThread *vmThread, J9Class *elementTypeClass);
 
+/**
+ * Build an array of java.lang.reflect.RecordComponent for the record components of a record class
+ * 
+ * @param[in] env The JNI context.
+ * @param[in] cls A class.  Must be non-null.
+ * 
+ * @return jarray an array of java.lang.reflect.RecordComponent.
+ * If cls is not a record, return null.
+ * If record class has no record components, return an empty array.
+ */
+jarray
+getRecordComponentsHelper(JNIEnv *env, jobject cls);
+
+/**
+ * Build an array of java.lang.String to return names of all permitted subclasses
+ * for a sealed class.
+ * 
+ * @param[in] env The JNI context.
+ * @param[in] cls A class.  Must be non-null.
+ * 
+ * @return jarray an array of java.lang.String
+ */
+jarray
+permittedSubclassesHelper(JNIEnv *env, jobject cls);
 
 /* ---------------- sigquit.c ---------------- */
 void
@@ -132,6 +167,10 @@ initializeUnsafeMemoryTracking(J9JavaVM* vm);
 void
 freeUnsafeMemory(J9JavaVM* vm);
 
+/* ---------------- java_dyn_methodhandle.c ---------------- */
+#if defined(J9VM_OPT_JAVA_OFFLOAD_SUPPORT)
+void clearNonZAAPEligibleBit(JNIEnv *env, jclass nativeClass, const JNINativeMethod *nativeMethods, jint nativeMethodCount);
+#endif /* J9VM_OPT_JAVA_OFFLOAD_SUPPORT */
 
 #ifdef __cplusplus
 }

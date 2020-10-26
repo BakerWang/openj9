@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -52,7 +51,6 @@
 #include "ConcurrentGMPStats.hpp"
 #include "CycleState.hpp"
 #include "Debug.hpp"
-#include "Dispatcher.hpp"
 #include "EnvironmentVLHGC.hpp"
 #include "EnvironmentBase.hpp"
 #include "FinalizeListManager.hpp"
@@ -69,6 +67,7 @@
 #include "MemorySubSpace.hpp"
 #include "MemorySubSpaceTarok.hpp"
 #include "OMRVMInterface.hpp"
+#include "ParallelDispatcher.hpp"
 #include "ParallelTask.hpp"
 #include "ReferenceChainWalker.hpp"
 #include "VLHGCAccessBarrier.hpp"
@@ -79,8 +78,8 @@
 /**
  * Initialization
  */
-MM_IncrementalGenerationalGC::MM_IncrementalGenerationalGC(MM_EnvironmentVLHGC *env, MM_CollectorLanguageInterface *cli, MM_HeapRegionManager *manager)
-	: MM_GlobalCollector(env, cli)
+MM_IncrementalGenerationalGC::MM_IncrementalGenerationalGC(MM_EnvironmentVLHGC *env, MM_HeapRegionManager *manager)
+	: MM_GlobalCollector()
 	, _javaVM((J9JavaVM*)env->getOmrVM()->_language_vm)
 	, _extensions(MM_GCExtensions::getExtensions(env))
 	, _portLibrary(((J9JavaVM *)(env->getLanguageVM()))->portLibrary)
@@ -91,7 +90,6 @@ MM_IncrementalGenerationalGC::MM_IncrementalGenerationalGC(MM_EnvironmentVLHGC *
 	, _classLoaderRememberedSet(NULL)
 	, _copyForwardDelegate(env)
 	, _globalMarkDelegate(env)
-	, _partialMarkDelegate(env)
 	, _reclaimDelegate(env, manager, &_collectionSetDelegate)
 	, _schedulingDelegate(env, manager)
 	, _collectionSetDelegate(env, manager)
@@ -102,7 +100,7 @@ MM_IncrementalGenerationalGC::MM_IncrementalGenerationalGC(MM_EnvironmentVLHGC *
 	, _workPacketsForGlobalGC(NULL)
 	, _taxationThreshold(0)
 	, _allocatedSinceLastPGC(0)
-	, _masterGCThread(env)
+	, _mainGCThread(env)
 	, _persistentGlobalMarkPhaseState()
 	, _forceConcurrentTermination(false)
 	, _globalMarkPhaseIncrementBytesStillToScan(0)
@@ -111,13 +109,13 @@ MM_IncrementalGenerationalGC::MM_IncrementalGenerationalGC(MM_EnvironmentVLHGC *
 }
 
 MM_IncrementalGenerationalGC *
-MM_IncrementalGenerationalGC::newInstance(MM_EnvironmentVLHGC *env, MM_CollectorLanguageInterface *cli, MM_HeapRegionManager *manager)
+MM_IncrementalGenerationalGC::newInstance(MM_EnvironmentVLHGC *env, MM_HeapRegionManager *manager)
 {
 	MM_IncrementalGenerationalGC *globalGC;
 		
 	globalGC = (MM_IncrementalGenerationalGC *)env->getForge()->allocate(sizeof(MM_IncrementalGenerationalGC), MM_AllocationCategory::FIXED, J9_GET_CALLSITE());
 	if (globalGC) {
-		new(globalGC) MM_IncrementalGenerationalGC(env, cli, manager);
+		new(globalGC) MM_IncrementalGenerationalGC(env, manager);
 		if (!globalGC->initialize(env)) { 
         	globalGC->kill(env);
         	globalGC = NULL;
@@ -172,9 +170,6 @@ MM_IncrementalGenerationalGC::initialize(MM_EnvironmentVLHGC *env)
  		goto error_no_memory;
  	}
 
- 	if(!_partialMarkDelegate.initialize(env)) {
- 		goto error_no_memory;
- 	}
  	
  	if(!_reclaimDelegate.initialize(env)) {
  		goto error_no_memory;
@@ -196,7 +191,7 @@ MM_IncrementalGenerationalGC::initialize(MM_EnvironmentVLHGC *env)
 		goto error_no_memory;
 	}
 
-	if (!_masterGCThread.initialize(this)) {
+	if (!_mainGCThread.initialize(this)) {
 		goto error_no_memory;
 	}
 
@@ -293,15 +288,12 @@ MM_IncrementalGenerationalGC::tearDown(MM_EnvironmentVLHGC *env)
 	_copyForwardDelegate.tearDown(env);
 
 	_globalMarkDelegate.tearDown(env);
-
-	_partialMarkDelegate.tearDown(env);
-	
 	_reclaimDelegate.tearDown(env);
 
 	_collectionSetDelegate.tearDown(env);
 	_projectedSurvivalCollectionSetDelegate.tearDown(env);
 
-	_masterGCThread.tearDown(env);
+	_mainGCThread.tearDown(env);
 	
 	if(NULL != _markMapManager) {
 		_markMapManager->kill(env);
@@ -352,12 +344,12 @@ MM_IncrementalGenerationalGC::setupBeforeGC(MM_EnvironmentBase *env)
 }
 
 void
-MM_IncrementalGenerationalGC::masterThreadGarbageCollect(MM_EnvironmentBase *envBase, MM_AllocateDescription *allocDescription, bool initMarkMap, bool rebuildMarkBits)
+MM_IncrementalGenerationalGC::mainThreadGarbageCollect(MM_EnvironmentBase *envBase, MM_AllocateDescription *allocDescription, bool initMarkMap, bool rebuildMarkBits)
 {
 	J9VMThread 	*vmThread = (J9VMThread *)envBase->getOmrVMThread()->_language_vmthread;
 	MM_EnvironmentVLHGC *env = MM_EnvironmentVLHGC::getEnvironment(envBase);
 
-	/* We might be running in a context of either main or master thread, but either way we must have exclusive access */
+	/* We might be running in a context of either main or main thread, but either way we must have exclusive access */
 	Assert_MM_mustHaveExclusiveVMAccess(env->getOmrVMThread());
 
 	Assert_MM_true(NULL != _extensions->rememberedSetCardBucketPool);
@@ -391,6 +383,10 @@ MM_IncrementalGenerationalGC::masterThreadGarbageCollect(MM_EnvironmentBase *env
 	 * allow concurrent operations.
 	 */
 	_forceConcurrentTermination = false;
+
+	/* Release any resources that might be bound to this main thread,
+	 * since it may be implicit and change for other phases of the cycle */
+	_interRegionRememberedSet->releaseCardBufferControlBlockListForThread(env, env);
 }
 
 void
@@ -419,7 +415,6 @@ MM_IncrementalGenerationalGC::globalMarkPhase(MM_EnvironmentVLHGC *env, bool inc
 	
 	PORT_ACCESS_FROM_ENVIRONMENT(env);
 
-	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.clear();
 	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._markStats._startTime = j9time_hires_clock();
 
 	if (incrementalMark) {
@@ -532,7 +527,7 @@ MM_IncrementalGenerationalGC::internalGarbageCollect(MM_EnvironmentBase *env, MM
 		env->_cycleState->_referenceObjectOptions |= MM_CycleState::references_soft_as_weak;
 	}
 
-	bool didAttemptCollect = _masterGCThread.garbageCollect(envVLHGC, static_cast<MM_AllocateDescription*>(allocDescription));
+	bool didAttemptCollect = _mainGCThread.garbageCollect(envVLHGC, static_cast<MM_AllocateDescription*>(allocDescription));
 
 	env->_cycleState->_activeSubSpace = NULL;
 
@@ -552,33 +547,22 @@ MM_IncrementalGenerationalGC::heapAddRange(MM_EnvironmentBase *env, MM_MemorySub
 	if (result) {
 		result = _globalMarkDelegate.heapAddRange(envVLHGC, subspace, size, lowAddress, highAddress);
 		if (result) {
-			result = _partialMarkDelegate.heapAddRange(envVLHGC, subspace, size, lowAddress, highAddress);
+			result = _reclaimDelegate.heapAddRange(envVLHGC, subspace, size, lowAddress, highAddress);
 			if (result) {
-				result = _reclaimDelegate.heapAddRange(envVLHGC, subspace, size, lowAddress, highAddress);
-				if (result) {
-					if(NULL != _extensions->referenceChainWalkerMarkMap) {
-						result = _extensions->referenceChainWalkerMarkMap->heapAddRange(envVLHGC, size, lowAddress, highAddress);
-						if (!result) {
-							/* Reference Chain Walker Mark Map expansion has failed
-							 * Mark Map Manager, Global Mark Delegate, Partial Mark Delegate and Reclaim Delegate expansions must be reversed
-							 */
-							_reclaimDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-							_partialMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-							_globalMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-							_markMapManager->heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-						}
+				if(NULL != _extensions->referenceChainWalkerMarkMap) {
+					result = _extensions->referenceChainWalkerMarkMap->heapAddRange(envVLHGC, size, lowAddress, highAddress);
+					if (!result) {
+						/* Reference Chain Walker Mark Map expansion has failed
+						 * Mark Map Manager, Global Mark Delegate, Partial Mark Delegate and Reclaim Delegate expansions must be reversed
+						 */
+						_reclaimDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
+						_globalMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
+						_markMapManager->heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
 					}
-				} else {
-					/* Reclaim Delegate expansion has failed
-					 * Mark Map Manager, Global Mark Delegate and Partial Mark Delegate expansions must be reversed
-					 */
-					_partialMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-					_globalMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
-					_markMapManager->heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
 				}
 			} else {
-				/* Partial Mark Delegate expansion has failed
-				 * Mark Map Manager and Global Mark Delegate expansions must be reversed
+				/* Reclaim Delegate expansion has failed
+				 * Mark Map Manager, Global Mark Delegate and Partial Mark Delegate expansions must be reversed
 				 */
 				_globalMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
 				_markMapManager->heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, NULL, NULL);
@@ -606,8 +590,6 @@ MM_IncrementalGenerationalGC::heapRemoveRange(MM_EnvironmentBase *env, MM_Memory
 
 	result = result && _globalMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, lowValidAddress, highValidAddress);
 
-	result = result && _partialMarkDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, lowValidAddress, highValidAddress);
-	
 	result = result && _reclaimDelegate.heapRemoveRange(envVLHGC, subspace, size, lowAddress, highAddress, lowValidAddress, highValidAddress);
 
 	if(NULL != _extensions->referenceChainWalkerMarkMap) {
@@ -620,7 +602,7 @@ MM_IncrementalGenerationalGC::heapRemoveRange(MM_EnvironmentBase *env, MM_Memory
  * @see MM_GlobalCollector::heapReconfigured()
  */
 void
-MM_IncrementalGenerationalGC::heapReconfigured(MM_EnvironmentBase *env)
+MM_IncrementalGenerationalGC::heapReconfigured(MM_EnvironmentBase *env, HeapReconfigReason reason, MM_MemorySubSpace *subspace, void *lowAddress, void *highAddress)
 {
 	MM_EnvironmentVLHGC *envVLHGC = MM_EnvironmentVLHGC::getEnvironment(env);
 	
@@ -629,10 +611,10 @@ MM_IncrementalGenerationalGC::heapReconfigured(MM_EnvironmentBase *env)
 }
 
 void
-MM_IncrementalGenerationalGC::preMasterGCThreadInitialize(MM_EnvironmentBase *envBase)
+MM_IncrementalGenerationalGC::preMainGCThreadInitialize(MM_EnvironmentBase *envBase)
 {
 	MM_EnvironmentVLHGC *env = MM_EnvironmentVLHGC::getEnvironment(envBase);
-	_interRegionRememberedSet->setRememberedSetCardBucketPoolForMasterThread(env);
+	_interRegionRememberedSet->setRememberedSetCardBucketPoolForMainThread(env);
 
 	if (!_markMapManager->collectorStartup(MM_GCExtensions::getExtensions(envBase->getExtensions()))) {
 		Assert_MM_unreachable();
@@ -643,13 +625,16 @@ void
 MM_IncrementalGenerationalGC::initializeTaxationThreshold(MM_EnvironmentVLHGC *env)
 {
 	/**
-	 * This may be called from either real Master GC thread or acting Master GC thread (any thread that caused GC in absence of real Master GC thread).
+	 * This may be called from either real Main GC thread or acting Main GC thread (any thread that caused GC in absence of real Main GC thread).
 	 *  taxationThreshold will be initialized only once.
 	 */
 	MM_GCExtensions *extensions = MM_GCExtensions::getExtensions(env);
 
 	/* we need to calculate the taxation threshold after the initial heap inflation, which happens before collectorStartup */
 	_taxationThreshold = _schedulingDelegate.getInitialTaxationThreshold(env);
+	/* initialize GMP Kickoff Headroom Region Count */
+	_schedulingDelegate.initializeKickoffHeadroom(env);
+
 
 	UDATA minimumKickOff = extensions->regionSize * 2;
 	if (_taxationThreshold < minimumKickOff) {
@@ -670,10 +655,10 @@ MM_IncrementalGenerationalGC::collectorStartup(MM_GCExtensionsBase *extensions)
 	 * WARNING:  GCs can occur before this function is run!  Any initialization which a GC MUST rely on should be in initialize.
 	 */
 	/*
-	 * Note that _masterGCThread.startup() can invoke a GC (allocates a Thread object) so it must be the last part of
+	 * Note that _mainGCThread.startup() can invoke a GC (allocates a Thread object) so it must be the last part of
 	 * collector startup.
 	 */
-	if (!_masterGCThread.startup()) {
+	if (!_mainGCThread.startup()) {
 		return false;
 	}
 	return true;
@@ -682,12 +667,12 @@ MM_IncrementalGenerationalGC::collectorStartup(MM_GCExtensionsBase *extensions)
 void
 MM_IncrementalGenerationalGC::collectorShutdown(MM_GCExtensionsBase *extensions)
 {
-	_masterGCThread.shutdown();
+	_mainGCThread.shutdown();
 }
 
 /**
  * Determine if a  expand is required 
- * @return expand size if rator expand required or 0 otheriwse
+ * @return expand size if rator expand required or 0 otherwise
  */
 U_32
 MM_IncrementalGenerationalGC::getGCTimePercentage(MM_EnvironmentBase *env)
@@ -842,6 +827,7 @@ MM_IncrementalGenerationalGC::taxationEntryPoint(MM_EnvironmentBase *envModron, 
 		Assert_MM_true(NULL == env->_cycleState);
 		MM_CycleStateVLHGC cycleState;
 		env->_cycleState = &cycleState;
+		cycleState._schedulingDelegate = &_schedulingDelegate;
 		env->_cycleState->_gcCode = MM_GCCode(J9MMCONSTANT_IMPLICIT_GC_DEFAULT);
 		env->_cycleState->_collectionType = MM_CycleState::CT_PARTIAL_GARBAGE_COLLECTION;
 		env->_cycleState->_type = OMR_GC_CYCLE_TYPE_VLHGC_PARTIAL_GARBAGE_COLLECT;
@@ -850,7 +836,7 @@ MM_IncrementalGenerationalGC::taxationEntryPoint(MM_EnvironmentBase *envModron, 
 		env->_cycleState->_collectionStatistics = &_partialCollectionStatistics;
 		static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.clear();
 
-		bool didAttemptCollect = _masterGCThread.garbageCollect(env, allocDescription);
+		bool didAttemptCollect = _mainGCThread.garbageCollect(env, allocDescription);
 		Assert_MM_true(didAttemptCollect);
 
 		env->_cycleState->_activeSubSpace = NULL;
@@ -871,7 +857,7 @@ MM_IncrementalGenerationalGC::taxationEntryPoint(MM_EnvironmentBase *envModron, 
 		env->_cycleState->_referenceObjectOptions = MM_CycleState::references_default;
 		env->_cycleState->_collectionStatistics = &_globalCollectionStatistics;
 
-		bool didAttemptCollect = _masterGCThread.garbageCollect(env, allocDescription);
+		bool didAttemptCollect = _mainGCThread.garbageCollect(env, allocDescription);
 		Assert_MM_true(didAttemptCollect);
 
 		env->_cycleState->_activeSubSpace = NULL;
@@ -930,7 +916,7 @@ MM_IncrementalGenerationalGC::runPartialGarbageCollect(MM_EnvironmentVLHGC *env,
 
 	preCollect(env, env->_cycleState->_activeSubSpace, NULL, J9MMCONSTANT_IMPLICIT_GC_DEFAULT);
 
-	/* Perform any master-specific setup */
+	/* Perform any main-specific setup */
 	_extensions->globalVLHGCStats.gcCount += 1;
 
 	/*
@@ -984,7 +970,7 @@ MM_IncrementalGenerationalGC::runGlobalMarkPhaseIncrement(MM_EnvironmentVLHGC *e
 	reportGMPIncrementStart(env);
 	reportGCIncrementStart(env, "GMP increment", env->_cycleState->_currentIncrement);
 
-	/* Perform any master-specific setup */
+	/* Perform any main-specific setup */
 	_extensions->globalVLHGCStats.gcCount += 1;
 
 	if ((_globalMarkPhaseIncrementBytesStillToScan > 0) || (MM_CycleState::state_process_work_packets_after_initial_mark != _persistentGlobalMarkPhaseState._markDelegateState)) {
@@ -1016,6 +1002,7 @@ MM_IncrementalGenerationalGC::runGlobalMarkPhaseIncrement(MM_EnvironmentVLHGC *e
 	}
 
 	/* If the GMP is no longer running, then we have run the final increment of the cycle. */
+	Assert_MM_true(0 == static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._copyForwardStats.getStallTime());
 	if(!isGlobalMarkPhaseRunning()) {
 		reportGCCycleFinalIncrementEnding(env);
 		/* TODO: TEMPORARY: This is a temporary call that should be deleted once the new verbose format is in place */
@@ -1052,7 +1039,7 @@ MM_IncrementalGenerationalGC::runGlobalGarbageCollection(MM_EnvironmentVLHGC *en
 	reportGlobalGCStart(env);
 	reportGCIncrementStart(env, "global collect", env->_cycleState->_currentIncrement);
 
-	/* Perform any master-specific setup */
+	/* Perform any main-specific setup */
 	/* Tell the GAM to flush its contexts */
 	MM_GlobalAllocationManager *gam = _extensions->globalAllocationManager;
 	if (NULL != gam) {
@@ -1131,7 +1118,7 @@ MM_IncrementalGenerationalGC::runGlobalGarbageCollection(MM_EnvironmentVLHGC *en
 	 */
 	/* Global Collection - we max out ages on all live regions to remove them from the nursery collection set */
 	setRegionAgesToMax(env);
-
+	Assert_MM_true(0 == static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._copyForwardStats.getStallTime());
 	reportGCCycleFinalIncrementEnding(env);
 	/* TODO: TEMPORARY: This is a temporary call that should be deleted once the new verbose format is in place */
 	/* NOTE: May want to move any tracepoints up into this routine */
@@ -1176,7 +1163,7 @@ MM_IncrementalGenerationalGC::reportGCEnd(MM_EnvironmentBase *env)
 void
 MM_IncrementalGenerationalGC::flushRememberedSetIntoCardTable(MM_EnvironmentVLHGC *env)
 {
-	MM_Dispatcher *dispatcher = _extensions->dispatcher;
+	MM_ParallelDispatcher *dispatcher = _extensions->dispatcher;
 	MM_CardListFlushTask flushTask(env, dispatcher, _regionManager, _interRegionRememberedSet);
 	dispatcher->run(env, &flushTask);
 }
@@ -1202,6 +1189,7 @@ MM_IncrementalGenerationalGC::partialGarbageCollect(MM_EnvironmentVLHGC *env, MM
 	
 	Assert_MM_false(_workPacketsForGlobalGC->getOverflowFlag());
 	Assert_MM_false(_workPacketsForPartialGC->getOverflowFlag());
+	Assert_MM_true(0 == static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.getTotalStallTime());
 
 	reportGCCycleStart(env);
 	reportPGCStart(env);
@@ -1216,6 +1204,7 @@ MM_IncrementalGenerationalGC::partialGarbageCollect(MM_EnvironmentVLHGC *env, MM
 	MM_CompactGroupPersistentStats::updateStatsBeforeCollect(env, persistentStats);
 	if (_schedulingDelegate.isGlobalSweepRequired()) {
 		Assert_MM_true(NULL == env->_cycleState->_externalCycleState);
+
 		_reclaimDelegate.runGlobalSweepBeforePGC(env, allocDescription, env->_cycleState->_activeSubSpace, env->_cycleState->_gcCode);
 
 		/* TODO: lpnguyen make another statisticsDelegate or something that both schedulingDelegate and reclaimDelegate can see
@@ -1230,19 +1219,6 @@ MM_IncrementalGenerationalGC::partialGarbageCollect(MM_EnvironmentVLHGC *env, MM
 		_schedulingDelegate.setAutomaticDefragmentEmptinessThreshold(optimalEmptinessRegionThreshold);
 	}
 
-	if (env->_cycleState->_shouldRunCopyForward) {
-		MM_HeapRegionDescriptorVLHGC *region = NULL;
-		GC_HeapRegionIteratorVLHGC iterator(_regionManager);
-		while (env->_cycleState->_shouldRunCopyForward && (NULL != (region = iterator.nextRegion()))) {
-			if ((region->_criticalRegionsInUse > 0) && region->isEden()) {
-				/* if we find any Eden regions which have critical regions in use, we need to switch to Mark-Compact since we have to collect Eden but can't move objects in this region */
-				env->_cycleState->_shouldRunCopyForward = false;
-				/* record this observation in the cycle state so that verbose can see it and produce an appropriate message */
-				env->_cycleState->_reasonForMarkCompactPGC = MM_CycleState::reason_JNI_critical_in_Eden;
-			}
-		}
-	}
-	
 	/* Determine if there are enough regions available to attempt a copy-forward collection.
 	 * Note that this check is done after we sweep, since that might have recovered enough 
 	 * regions to make copy-forward feasible.
@@ -1258,12 +1234,8 @@ MM_IncrementalGenerationalGC::partialGarbageCollect(MM_EnvironmentVLHGC *env, MM
 			env->_cycleState->_reasonForMarkCompactPGC = MM_CycleState::reason_insufficient_free_space;
 		}
 	}
-	
-	if (env->_cycleState->_shouldRunCopyForward) {
-		partialGarbageCollectUsingCopyForward(env, allocDescription);
-	} else {
-		partialGarbageCollectUsingMarkCompact(env, allocDescription);
-	}
+
+	partialGarbageCollectUsingCopyForward(env, allocDescription);
 
 	env->_cycleState->_workPackets = NULL;
 	env->_cycleState->_markMap = NULL;
@@ -1305,9 +1277,31 @@ MM_IncrementalGenerationalGC::partialGarbageCollectUsingCopyForward(MM_Environme
 
 	UDATA desiredCompactWork = _schedulingDelegate.getDesiredCompactWork();
 	UDATA estimatedSurvivorRequired = _copyForwardDelegate.estimateRequiredSurvivorBytes(env);
+
+	MM_GlobalAllocationManagerTarok *allocationmanager = (MM_GlobalAllocationManagerTarok *)_extensions->globalAllocationManager;
+	UDATA freeRegions = allocationmanager->getFreeRegionCount();
+	double estimatedReguiredSurvivorRegions = _schedulingDelegate.getAverageSurvivorSetRegionCount();
+	MM_GCExtensions* extensions = MM_GCExtensions::getExtensions(env);
+	/* Adjust estimatedReguiredSurvivorRegions if extensions->fvtest_forceCopyForwardHybridRatio is set(for testing purpose) */
+	if ((0 != extensions->fvtest_forceCopyForwardHybridRatio) && (100 >= extensions->fvtest_forceCopyForwardHybridRatio)) {
+		estimatedReguiredSurvivorRegions = estimatedReguiredSurvivorRegions * (100 - extensions->fvtest_forceCopyForwardHybridRatio) / 100;
+	}
+
+	if ((_schedulingDelegate.isPGCAbortDuringGMP() || _schedulingDelegate.isFirstPGCAfterGMP()) && (estimatedReguiredSurvivorRegions > freeRegions)) {
+		double edenSurvivorRate = _schedulingDelegate.getAvgEdenSurvivalRateCopyForward(env);
+		UDATA regionCountRequiredMarkOnly = 0;
+		if (0 != edenSurvivorRate) {
+			regionCountRequiredMarkOnly = (UDATA)((estimatedReguiredSurvivorRegions - freeRegions) / edenSurvivorRate);
+		} else {
+			regionCountRequiredMarkOnly = _schedulingDelegate.getCurrentEdenSizeInRegions(env);
+		}
+		/* set the number of the selected eden regions to nonEvacuated region to avoid potential abort case */
+		_copyForwardDelegate.setReservedNonEvacuatedRegions(regionCountRequiredMarkOnly);
+	}
+
 	bool useSlidingCompactor = ((estimatedSurvivorRequired + desiredCompactWork) > freeMemoryForSurvivor);
 	Trc_MM_IncrementalGenerationalGC_partialGarbageCollectUsingCopyForward_ChooseCompactor(env->getLanguageVMThread(), estimatedSurvivorRequired, desiredCompactWork, freeMemoryForSurvivor, useSlidingCompactor ? "sliding" : "copying");
-	
+
 	if (!useSlidingCompactor) {
 		_reclaimDelegate.createRegionCollectionSetForPartialGC(env, desiredCompactWork);
 		/* no external compact work -- it's all being done using copy-forward */
@@ -1318,6 +1312,7 @@ MM_IncrementalGenerationalGC::partialGarbageCollectUsingCopyForward(MM_Environme
 
 	/* flush the RSList and RSM from our currently selected regions into the card table since we will rebuild them as we process the table */
 	flushRememberedSetIntoCardTable(env);
+
 	_interRegionRememberedSet->flushBuffersForDecommitedRegions(env);
 
 	Assert_MM_true(env->_cycleState->_markMap == _markMapManager->getPartialGCMap());
@@ -1358,8 +1353,8 @@ MM_IncrementalGenerationalGC::partialGarbageCollectUsingCopyForward(MM_Environme
 		_reclaimDelegate.runCompact(env, allocDescription, env->_cycleState->_activeSubSpace, desiredCompactWork, env->_cycleState->_gcCode, _markMapManager->getGlobalMarkPhaseMap(), &regionsSkippedByCompactorRequiringSweep);
 		/* we can't tell exactly how many bytes were added to meet the compact goal, so we'll assume it was an exact match. The precise amount could be lower or higher */ 
 		static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._copyForwardStats._externalCompactBytes = desiredCompactWork;
-	} else if(!successful) {
-		/* compact any unsuccessfully evacuated regions */
+	} else if(!successful || _copyForwardDelegate.isHybrid(env)) {
+		/* compact any unsuccessfully evacuated regions (include reclaiming jni critical eden regions)*/
 		_reclaimDelegate.runReclaimForAbortedCopyForward(env, allocDescription, env->_cycleState->_activeSubSpace, env->_cycleState->_gcCode, _markMapManager->getGlobalMarkPhaseMap(), &regionsSkippedByCompactorRequiringSweep);
 	}
 
@@ -1367,6 +1362,10 @@ MM_IncrementalGenerationalGC::partialGarbageCollectUsingCopyForward(MM_Environme
 		/* there were regions which we needed to compact but we couldn't compact so at least sweep them to ensure that their stats are correct */
 		_reclaimDelegate.performAtomicSweep(env, allocDescription, env->_cycleState->_activeSubSpace, env->_cycleState->_gcCode);
 	}
+
+	/* calculatePGCCompactionRate() has to be after PGC due to half of Eden regions has not been marked after final GMP (the sweep could not collect those regions) */
+	/* calculatePGCCompactionRate() has to be before estimateReclaimableRegions(), which need to use the result of calculatePGCCompactionRate() - region->_defragmentationTarget */
+	_schedulingDelegate.recalculateRatesOnFirstPGCAfterGMP(env);
 
 	/* Need to understand how to do the estimates here found within the following two calls */
 	UDATA defragmentReclaimableRegions = 0;
@@ -1390,74 +1389,6 @@ MM_IncrementalGenerationalGC::partialGarbageCollectUsingCopyForward(MM_Environme
 	Trc_MM_IncrementalGenerationalGC_partialGarbageCollectUsingCopyForward_Exit(env->getLanguageVMThread());
 }
 
-void
-MM_IncrementalGenerationalGC::partialGarbageCollectUsingMarkCompact(MM_EnvironmentVLHGC *env, MM_AllocateDescription *allocDescription)
-{
-	PORT_ACCESS_FROM_ENVIRONMENT(env);
-	
-	if (_extensions->tarokUseProjectedSurvivalCollectionSet) {
-		_projectedSurvivalCollectionSetDelegate.createRegionCollectionSetForPartialGC(env);
-	} else {
-		_collectionSetDelegate.createRegionCollectionSetForPartialGC(env);
-	}
-
-	_schedulingDelegate.partialGarbageCollectStarted(env);
-
-	/* flush the RSList and RSM from our currently selected regions into the card table since we will rebuild them as we process the table */
-	flushRememberedSetIntoCardTable(env);
-	_interRegionRememberedSet->flushBuffersForDecommitedRegions(env);
-
-	Assert_MM_true(env->_cycleState->_markMap == _markMapManager->getPartialGCMap());
-	Assert_MM_true(env->_cycleState->_workPackets == _workPacketsForPartialGC);
-
-	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._markStats._startTime = j9time_hires_clock();
-	reportPGCMarkStart(env);
-
-	MM_MarkMap *savedMapState = NULL;
-	if (J9_EVENT_IS_HOOKED(_extensions->omrHookInterface, J9HOOK_MM_OMR_OBJECT_DELETE)) {
-		savedMapState = _markMapManager->savePreviousMarkMapForDeleteEvents(env);
-	}
-	/* now we can finish marking the collection set */
-	_partialMarkDelegate.performMarkForPartialGC(env);
-	if (NULL != savedMapState) {
-		_markMapManager->reportDeletedObjects(env, savedMapState, env->_cycleState->_markMap);
-	}
-	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._markStats._endTime = j9time_hires_clock();
-	reportPGCMarkEnd(env);
-
-	postMarkMapCompletion(env);
-	_partialMarkDelegate.postMarkCleanup(env);
-
-	/* all objects in collection set regions are now marked, so change the type of these regions */
-	declareAllRegionsAsMarked(env);
-
-	/* this considers regions that are marked&swept since last GMP */
-	UDATA compactSelectionGoalInBytes = _schedulingDelegate.getDesiredCompactWork();
-	{
-		Trc_MM_ReclaimDelegate_runReclaimComplete_Entry(env->getLanguageVMThread(), compactSelectionGoalInBytes, 0);
-		_reclaimDelegate.runReclaimCompleteSweep(env, allocDescription, env->_cycleState->_activeSubSpace, env->_cycleState->_gcCode);
-		_reclaimDelegate.runReclaimCompleteCompact(env, allocDescription, env->_cycleState->_activeSubSpace, env->_cycleState->_gcCode, _markMapManager->getGlobalMarkPhaseMap(), compactSelectionGoalInBytes);
-		Trc_MM_ReclaimDelegate_runReclaimComplete_Exit(env->getLanguageVMThread(), 0);
-	}
-
-	UDATA defragmentReclaimableRegions = 0;
-	UDATA reclaimableRegions = 0;
-	_reclaimDelegate.estimateReclaimableRegions(env, 0.0 /* copy-forward loss */, &reclaimableRegions, &defragmentReclaimableRegions);
-	_schedulingDelegate.partialGarbageCollectCompleted(env, reclaimableRegions, defragmentReclaimableRegions);
-	
-	if (_extensions->tarokUseProjectedSurvivalCollectionSet) {
-		_projectedSurvivalCollectionSetDelegate.deleteRegionCollectionSetForPartialGC(env);
-	} else {
-		_collectionSetDelegate.deleteRegionCollectionSetForPartialGC(env);
-	}
-	
-	if (_extensions->fvtest_tarokVerifyMarkMapClosure) {
-		verifyMarkMapClosure(env, env->_cycleState->_markMap);
-	}
-
-	Assert_MM_false(_workPacketsForGlobalGC->getOverflowFlag());
-	Assert_MM_false(_workPacketsForPartialGC->getOverflowFlag());
-}
 
 void 
 MM_IncrementalGenerationalGC::setupBeforePartialGC(MM_EnvironmentVLHGC *env, MM_GCCode gcCode)
@@ -1501,6 +1432,7 @@ MM_IncrementalGenerationalGC::setupBeforeGlobalGC(MM_EnvironmentVLHGC *env, MM_G
 #endif /* defined(J9VM_GC_DYNAMIC_CLASS_UNLOADING) */
 
 	setupBeforeGC(env);
+	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.clear();
 }
 
 void
@@ -1581,13 +1513,9 @@ MM_IncrementalGenerationalGC::incrementRegionAges(MM_EnvironmentVLHGC *env, UDAT
 	}
 
 	/* Overflowing stable regions releases buffers to thread local pool. Move them now to the locked global pool.
-	 * (if this is run in context of non-GC thread there will be not further opportinities to do it).
+	 * (if this is run in context of non-GC thread there will be not further opportunities to do it).
 	 */
-	env->_rsclBufferControlBlockCount -= _interRegionRememberedSet->releaseCardBufferControlBlockList(env, env->_rsclBufferControlBlockHead, env->_rsclBufferControlBlockTail);
-	Assert_MM_true(0 == env->_rsclBufferControlBlockCount);
-	env->_rsclBufferControlBlockHead = NULL;
-	env->_rsclBufferControlBlockTail = NULL;
-
+	_interRegionRememberedSet->releaseCardBufferControlBlockListForThread(env, env);
 }
 
 void 
@@ -1668,6 +1596,9 @@ MM_IncrementalGenerationalGC::setRegionAgesToMax(MM_EnvironmentVLHGC *env)
 				region->_allocateData._owningContext = commonContext;
 				owner->migrateRegionToAllocationContext(region, commonContext);
 			}
+		} else if (region->isArrayletLeaf()) {
+			/* adjust age for arraylet leaves */
+			region->setAge(_extensions->tarokMaximumAgeInBytes, _extensions->tarokRegionMaxAge);
 		}
 	}
 }
@@ -1703,8 +1634,6 @@ MM_IncrementalGenerationalGC::declareAllRegionsAsMarked(MM_EnvironmentVLHGC *env
 bool
 MM_IncrementalGenerationalGC::isMarked(void *objectPtr)
 {
-	/* NOTE:  we shouldn't be using this entry-point for checking if an object is marked if we are currently within a cycle (the caller should use the mark map that they are working on) */
-	Assert_MM_false(_masterGCThread.isGarbageCollectInProgress());
 	/* the mark map used for PGC should be the most accurate */
 	return _markMapManager->getPartialGCMap()->isBitSet(static_cast<J9Object*>(objectPtr));
 }
@@ -1738,7 +1667,7 @@ MM_IncrementalGenerationalGC::verifyMarkMapClosure(MM_EnvironmentVLHGC *env, MM_
 			J9Object *object = NULL;
 			while (NULL != (object = iterator.nextObject())) {
 				/* first, check the validity of the object's class */
-				J9Class *clazz = J9GC_J9OBJECT_CLAZZ(object);
+				J9Class *clazz = J9GC_J9OBJECT_CLAZZ(object, env);
 				Assert_MM_true((UDATA)0x99669966 == clazz->eyecatcher);
 				/* second, verify that it is an instance of a marked class */
 				J9Object *classObject = (J9Object *)clazz->classObject;
@@ -1749,6 +1678,7 @@ MM_IncrementalGenerationalGC::verifyMarkMapClosure(MM_EnvironmentVLHGC *env, MM_
 				case GC_ObjectModel::SCAN_REFERENCE_MIXED_OBJECT:
 					Assert_MM_true(GC_ObjectModel::REF_STATE_REMEMBERED != J9GC_J9VMJAVALANGREFERENCE_STATE(env, object));
 					/* fall through */
+				case GC_ObjectModel::SCAN_MIXED_OBJECT_LINKED:
 				case GC_ObjectModel::SCAN_ATOMIC_MARKABLE_REFERENCE_OBJECT:
 				case GC_ObjectModel::SCAN_MIXED_OBJECT:
 				case GC_ObjectModel::SCAN_CLASS_OBJECT:
@@ -1918,15 +1848,6 @@ MM_IncrementalGenerationalGC::triggerGlobalGCEndHook(MM_EnvironmentVLHGC *env)
 	/* these are assigned to temporary variable out-of-line since some preprocessors get confused if you have directives in macros */
 	UDATA approximateActiveFreeMemorySize = 0;
 	UDATA activeMemorySize = 0;
-
-	Assert_MM_true(!_extensions->isMetronomeGC());
-	TRIGGER_J9HOOK_MM_PRIVATE_REPORT_MEMORY_USAGE(
-		_extensions->privateHookInterface,
-		env->getOmrVMThread(), 
-		j9time_hires_clock(), 
-		J9HOOK_MM_PRIVATE_REPORT_MEMORY_USAGE,
-		_extensions->getForge()->getCurrentStatistics()
-	);
 	
 	TRIGGER_J9HOOK_MM_OMR_GLOBAL_GC_END(
 		_extensions->omrHookInterface,
@@ -2010,12 +1931,12 @@ MM_IncrementalGenerationalGC::preConcurrentInitializeStatsAndReport(MM_Environme
 }
 
 uintptr_t
-MM_IncrementalGenerationalGC::masterThreadConcurrentCollect(MM_EnvironmentBase *envBase)
+MM_IncrementalGenerationalGC::mainThreadConcurrentCollect(MM_EnvironmentBase *envBase)
 {
 	MM_EnvironmentVLHGC *env = MM_EnvironmentVLHGC::getEnvironment(envBase);
 
 	/* note that we can't check isConcurrentWorkAvailable at this point since another thread could have set _forceConcurrentTermination since the
-	 * master thread calls this outside of the control monitor
+	 * main thread calls this outside of the control monitor
 	 */
 	Assert_MM_true(NULL == env->_cycleState);
 	Assert_MM_true(isGlobalMarkPhaseRunning());
@@ -2025,7 +1946,7 @@ MM_IncrementalGenerationalGC::masterThreadConcurrentCollect(MM_EnvironmentBase *
 	static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.clear();
 	
 	/* We pass a pointer to _forceConcurrentTermination so that we can cause the concurrent to terminate early by setting the
-	 * flag to true if we want to interrupt it so that the master thread returns to the control mutex in order to receive a
+	 * flag to true if we want to interrupt it so that the main thread returns to the control mutex in order to receive a
 	 * new GC request.
 	 */
 	UDATA bytesConcurrentlyScanned = _globalMarkDelegate.performMarkConcurrent(env, _globalMarkPhaseIncrementBytesStillToScan, &_forceConcurrentTermination);
@@ -2035,6 +1956,10 @@ MM_IncrementalGenerationalGC::masterThreadConcurrentCollect(MM_EnvironmentBase *
 	_persistentGlobalMarkPhaseState._vlhgcCycleStats.merge(&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats);
 
 	env->_cycleState = NULL;
+
+	/* Release any resources that might be bound to this main thread,
+	 * since it may be implicit and more importantly change for other phases of the cycle */
+	_interRegionRememberedSet->releaseCardBufferControlBlockListForThread(env, env);
 	
 	/* return the number of bytes scanned since the caller needs to pass it into postConcurrentUpdateStatsAndReport for stats reporting */
 	return bytesConcurrentlyScanned;
@@ -2223,13 +2148,15 @@ MM_IncrementalGenerationalGC::exportStats(MM_EnvironmentVLHGC *env, MM_Collectio
 				if (classesPotentiallyUnloaded && !isMarked((J9Object *)spine)) {
 					stats->_arrayletUnknownLeaves += 1;
 					/* is this first arraylet leaf? */
-					if (region->getLowAddress() == mmPointerFromToken((J9VMThread*)env->getLanguageVMThread(), _extensions->indexableObjectModel.getArrayoidPointer(spine)[0])) {
+					GC_SlotObject firstArrayletLeafSlot(_javaVM->omrVM, _extensions->indexableObjectModel.getArrayoidPointer(spine));
+					if (region->getLowAddress() == firstArrayletLeafSlot.readReferenceFromSlot()) {
 						stats->_arrayletUnknownObjects += 1;
 					}
 				} else if (GC_ObjectModel::SCAN_POINTER_ARRAY_OBJECT == _extensions->objectModel.getScanType((J9Object *)spine)) {
 					stats->_arrayletReferenceLeaves += 1;
 					/* is this first arraylet leaf? */
-					if (region->getLowAddress() == mmPointerFromToken((J9VMThread*)env->getLanguageVMThread(), _extensions->indexableObjectModel.getArrayoidPointer(spine)[0])) {
+					GC_SlotObject firstArrayletLeafSlot(_javaVM->omrVM, _extensions->indexableObjectModel.getArrayoidPointer(spine));
+					if (region->getLowAddress() == firstArrayletLeafSlot.readReferenceFromSlot()) {
 						stats->_arrayletReferenceObjects += 1;
 						UDATA numExternalArraylets = _extensions->indexableObjectModel.numExternalArraylets(spine);
 						if (stats->_largestReferenceArraylet < numExternalArraylets) {
@@ -2239,7 +2166,8 @@ MM_IncrementalGenerationalGC::exportStats(MM_EnvironmentVLHGC *env, MM_Collectio
 				} else {
 					Assert_MM_true(GC_ObjectModel::SCAN_PRIMITIVE_ARRAY_OBJECT == _extensions->objectModel.getScanType((J9Object *)spine));
 					stats->_arrayletPrimitiveLeaves += 1;
-					if (region->getLowAddress() == mmPointerFromToken((J9VMThread*)env->getLanguageVMThread(), _extensions->indexableObjectModel.getArrayoidPointer(spine)[0])) {
+					GC_SlotObject firstArrayletLeafSlot(_javaVM->omrVM, _extensions->indexableObjectModel.getArrayoidPointer(spine));
+					if (region->getLowAddress() == firstArrayletLeafSlot.readReferenceFromSlot()) {
 						stats->_arrayletPrimitiveObjects += 1;
 						UDATA numExternalArraylets = _extensions->indexableObjectModel.numExternalArraylets(spine);
 						if (stats->_largestPrimitiveArraylet < numExternalArraylets) {
@@ -2308,7 +2236,8 @@ MM_IncrementalGenerationalGC::reportGCIncrementEnd(MM_EnvironmentBase *env)
 	}
 
 	stats->_endTime = j9time_hires_clock();
-
+	stats->_stallTime = static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats.getTotalStallTime();
+	
 	TRIGGER_J9HOOK_MM_PRIVATE_GC_INCREMENT_END(
 		_extensions->privateHookInterface,
 		env->getOmrVMThread(),
@@ -2393,37 +2322,13 @@ MM_IncrementalGenerationalGC::reportGlobalGCMarkEnd(MM_EnvironmentBase *env)
 }
 
 void
-MM_IncrementalGenerationalGC::reportPGCMarkStart(MM_EnvironmentBase *env)
-{
-	reportMarkStart(env);
-
-	TRIGGER_J9HOOK_MM_PRIVATE_PGC_MARK_START(
-		_extensions->privateHookInterface,
-		env->getOmrVMThread(),
-		&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._markStats,
-		&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._workPacketStats);
-}
-
-void
-MM_IncrementalGenerationalGC::reportPGCMarkEnd(MM_EnvironmentBase *env)
-{
-	reportMarkEnd(env);
-
-	TRIGGER_J9HOOK_MM_PRIVATE_PGC_MARK_END(
-		_extensions->privateHookInterface,
-		env->getOmrVMThread(),
-		&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._markStats,
-		&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._workPacketStats,
-		&static_cast<MM_CycleStateVLHGC*>(env->_cycleState)->_vlhgcIncrementStats._irrsStats);
-}
-
-void
 MM_IncrementalGenerationalGC::collectorExpanded(MM_EnvironmentBase *envBase, MM_MemorySubSpace *subSpace, UDATA expandSize)
 {
 	MM_EnvironmentVLHGC* env = MM_EnvironmentVLHGC::getEnvironment(envBase);
 
 	/* this even can only happen during a copy-forward PGC */
 	Assert_MM_true(MM_CycleState::CT_PARTIAL_GARBAGE_COLLECTION == env->_cycleState->_collectionType);
+	/* if _shouldRunCopyForward == false, it is copyforwardhybrid with all regions need to be marked/compacted, for this case we don't need to collectorExpanded. */
 	Assert_MM_true(env->_cycleState->_shouldRunCopyForward);
 
 	MM_Collector::collectorExpanded(env, subSpace, expandSize);
@@ -2449,10 +2354,10 @@ MM_IncrementalGenerationalGC::postMarkMapCompletion(MM_EnvironmentVLHGC *env)
 #if defined(J9VM_GC_FINALIZATION)
    /* Alert the finalizer if work needs to be done */
 	if(env->_cycleState->_finalizationRequired) {
-		omrthread_monitor_enter(_javaVM->finalizeMasterMonitor);
-		_javaVM->finalizeMasterFlags |= J9_FINALIZE_FLAGS_MASTER_WAKE_UP;
-		omrthread_monitor_notify_all(_javaVM->finalizeMasterMonitor);
-		omrthread_monitor_exit(_javaVM->finalizeMasterMonitor);
+		omrthread_monitor_enter(_javaVM->finalizeMainMonitor);
+		_javaVM->finalizeMainFlags |= J9_FINALIZE_FLAGS_MAIN_WAKE_UP;
+		omrthread_monitor_notify_all(_javaVM->finalizeMainMonitor);
+		omrthread_monitor_exit(_javaVM->finalizeMainMonitor);
 	}
 #endif /* J9VM_GC_FINALIZATION */
 }
@@ -2468,7 +2373,7 @@ MM_IncrementalGenerationalGC::unloadDeadClassLoaders(MM_EnvironmentVLHGC *env)
 	Assert_MM_true(env->_cycleState->_dynamicClassUnloadingEnabled);
 
 	/* set the vmState whilst we're unloading classes */
-	UDATA vmState = env->pushVMstate(J9VMSTATE_GC_UNLOADING_DEAD_CLASSLOADERS);
+	UDATA vmState = env->pushVMstate(OMRVMSTATE_GC_CLEANING_METADATA);
 	/* we are going to report that we started unloading, even though we might decide that there is no work to do */
 	reportClassUnloadingStart(env);
 	classUnloadStats->_startTime = j9time_hires_clock();

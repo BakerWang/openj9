@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2010, 2014 IBM Corp. and others
+ * Copyright (c) 2010, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.tools.ddrinteractive.commands;
 
@@ -31,6 +31,7 @@ import com.ibm.j9ddr.vm29.j9.ObjectAccessBarrier;
 import com.ibm.j9ddr.vm29.pointer.VoidPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9BuildFlags;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
+import com.ibm.j9ddr.vm29.pointer.helper.J9ObjectHelper;
 
 /**
  * Handles converting !fj9object into !j9object
@@ -66,7 +67,7 @@ public class CompressedRefMappingCommand extends Command
 		
 		if (command.startsWith("!fj9object")) {
 			J9ObjectPointer mappedValue;
-			if (J9BuildFlags.gc_compressedPointers) {
+			if (J9ObjectHelper.compressObjectReferences) {
 				mappedValue = ObjectAccessBarrier.convertPointerFromToken(ptr.getAddress());
 			} else {
 				mappedValue = J9ObjectPointer.cast(ptr);
@@ -79,7 +80,7 @@ public class CompressedRefMappingCommand extends Command
 			}
 		} else {
 			long tokenValue;
-			if (J9BuildFlags.gc_compressedPointers) {
+			if (J9ObjectHelper.compressObjectReferences) {
 				tokenValue = ObjectAccessBarrier.convertTokenFromPointer(J9ObjectPointer.cast(ptr));
 			} else {
 				tokenValue = ptr.getAddress();

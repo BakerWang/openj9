@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,19 +17,16 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9.gc;
 
 import com.ibm.j9ddr.CorruptDataException;
 import com.ibm.j9ddr.vm29.pointer.ObjectReferencePointer;
-import com.ibm.j9ddr.vm29.pointer.UDATAPointer;
 import com.ibm.j9ddr.vm29.pointer.VoidPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ArrayClassPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9BuildFlags;
-import com.ibm.j9ddr.vm29.pointer.generated.J9ClassPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9IndexableObjectPointer;
-import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ROMArrayClassPointer;
 import com.ibm.j9ddr.vm29.pointer.helper.J9IndexableObjectHelper;
 import com.ibm.j9ddr.vm29.structure.J9IndexableObjectContiguous;
@@ -51,7 +48,7 @@ class GCContiguousArrayObjectModel_V1 extends GCArrayObjectModel
 
 	public UDATA getSizeInBytesWithHeader(J9IndexableObjectPointer array) throws CorruptDataException
 	{
-		return getSizeInBytesWithoutHeader(array).add(new UDATA(J9IndexableObjectContiguous.SIZEOF));
+		return getSizeInBytesWithoutHeader(array).add(new UDATA(J9IndexableObjectHelper.contiguousHeaderSize()));
 	}
 
 	public UDATA getHashcodeOffset(J9IndexableObjectPointer array) throws CorruptDataException
@@ -60,16 +57,13 @@ class GCContiguousArrayObjectModel_V1 extends GCArrayObjectModel
 		UDATA numberOfElements = getSizeInElements(array);
 		J9ROMArrayClassPointer romArrayClass = J9ROMArrayClassPointer.cast(clazz.romClass());
 		UDATA size = numberOfElements.leftShift(romArrayClass.arrayShape().bitAnd(0xFFFF).intValue());
-		size = size.add(J9IndexableObjectContiguous.SIZEOF);
+		size = size.add(J9IndexableObjectHelper.contiguousHeaderSize());
 		return UDATA.roundToSizeofU32(size);
 	}
 	
 	public UDATA getHeaderSize(J9IndexableObjectPointer array)
 	{
-		if (J9BuildFlags.gc_arraylets && J9BuildFlags.gc_hybridArraylets) {
-			return new UDATA(J9IndexableObjectDiscontiguous.SIZEOF);
-		}
-		return new UDATA(J9IndexableObjectContiguous.SIZEOF);
+		return new UDATA(J9IndexableObjectHelper.discontiguousHeaderSize());
 	}
 
 	/**

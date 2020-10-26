@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2016 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <stdlib.h>
@@ -38,7 +37,6 @@
 #include "ClassHeapIterator.hpp"
 #include "ClassLoaderIterator.hpp"
 #include "Debug.hpp"
-#include "Dispatcher.hpp"
 #include "EnvironmentBase.hpp"
 #if defined(J9VM_GC_FINALIZATION)
 #include "FinalizeListManager.hpp"
@@ -47,6 +45,9 @@
 #include "HeapRegionDescriptor.hpp"
 #include "HeapRegionIterator.hpp"
 #include "HeapRegionManager.hpp"
+#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
+#include "HeapRegionIteratorVLHGC.hpp"
+#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
 #include "MemoryPool.hpp"
 #include "MemorySubSpace.hpp"
 #include "MemorySpace.hpp"
@@ -56,6 +57,7 @@
 #include "ObjectHeapIteratorAddressOrderedList.hpp"
 #include "ObjectModel.hpp"
 #include "OwnableSynchronizerObjectList.hpp"
+#include "ParallelDispatcher.hpp"
 #include "PointerArrayIterator.hpp"
 #include "SlotObject.hpp"
 #include "StringTable.hpp"
@@ -81,19 +83,21 @@ MM_RootScanner::doClassLoader(J9ClassLoader *classLoader)
 void
 MM_RootScanner::scanModularityObjects(J9ClassLoader * classLoader)
 {
-	J9HashTableState moduleWalkState;
-	J9Module **modulePtr = (J9Module**)hashTableStartDo(classLoader->moduleHashTable, &moduleWalkState);
-	while (NULL != modulePtr) {
-		J9Module * const module = *modulePtr;
+	if (NULL != classLoader->moduleHashTable) {
+		J9HashTableState moduleWalkState;
+		J9Module **modulePtr = (J9Module**)hashTableStartDo(classLoader->moduleHashTable, &moduleWalkState);
+		while (NULL != modulePtr) {
+			J9Module * const module = *modulePtr;
 
-		doSlot(&module->moduleObject);
-		if (NULL != module->moduleName) {
-			doSlot(&module->moduleName);
+			doSlot(&module->moduleObject);
+			if (NULL != module->moduleName) {
+				doSlot(&module->moduleName);
+			}
+			if (NULL != module->version) {
+				doSlot(&module->version);
+			}
+			modulePtr = (J9Module**)hashTableNextDo(&moduleWalkState);
 		}
-		if (NULL != module->version) {
-			doSlot(&module->version);
-		}
-		modulePtr = (J9Module**)hashTableNextDo(&moduleWalkState);
 	}
 }
 
@@ -218,6 +222,14 @@ MM_RootScanner::doStringTableSlot(J9Object **slotPtr, GC_StringTableIterator *st
 	doSlot(slotPtr);
 }
 
+#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
+void
+MM_RootScanner::doDoubleMappedObjectSlot(J9Object *objectPtr, struct J9PortVmemIdentifier *identifier)
+{
+	/* No need to call doSlot() here since there's nothing to update */
+}
+#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
+
 /**
  * @Perform operation on the given string cache table slot.
  * @String table cache contains cached entries of string table, it's
@@ -285,6 +297,8 @@ MM_RootScanner::scanClasses(MM_EnvironmentBase *env)
 			}
 		}
 	}
+
+	condYield();
 
 	reportScanningEnded(RootScannerEntity_Classes);
 }
@@ -396,6 +410,8 @@ MM_RootScanner::scanPermanentClasses(MM_EnvironmentBase *env)
 		}
 	}
 
+	condYield();
+
 	reportScanningEnded(RootScannerEntity_PermanentClasses);
 }
 #endif /* J9VM_GC_DYNAMIC_CLASS_UNLOADING */
@@ -480,7 +496,7 @@ MM_RootScanner::scanThreads(MM_EnvironmentBase *env)
 
 /**
  * This function scans exactly one thread for potential roots.  It is designed as
- *    an overrideable subroutine of the primary functions scanThreads and scanSingleThread.
+ *    an overridable subroutine of the primary functions scanThreads and scanSingleThread.
  * @param walkThead the thread to be scanned
  * @param localData opaque data to be passed to the stack walker callback function.
  *   The root scanner fixes that callback function to the stackSlotIterator function
@@ -700,7 +716,7 @@ MM_RootScanner::scanOwnableSynchronizerObjects(MM_EnvironmentBase *env)
 	reportScanningStarted(RootScannerEntity_OwnableSynchronizerObjects);
 
 	MM_ObjectAccessBarrier *barrier = _extensions->accessBarrier;
-	MM_OwnableSynchronizerObjectList *ownableSynchronizerObjectList = _extensions->ownableSynchronizerObjectLists;
+	MM_OwnableSynchronizerObjectList *ownableSynchronizerObjectList = _extensions->getOwnableSynchronizerObjectLists();
 	while(NULL != ownableSynchronizerObjectList) {
 		if (_singleThread || J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
 			J9Object *objectPtr = ownableSynchronizerObjectList->getHeadOfList();
@@ -728,15 +744,11 @@ MM_RootScanner::scanMonitorLookupCaches(MM_EnvironmentBase *env)
 	GC_VMThreadListIterator vmThreadListIterator(static_cast<J9JavaVM*>(_omrVM->_language_vm));
 	while (J9VMThread *walkThread = vmThreadListIterator.nextVMThread()) {
 		if (_singleThread || J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
-#if defined(J9VM_THR_LOCK_NURSERY)
 			j9objectmonitor_t *objectMonitorLookupCache = walkThread->objectMonitorLookupCache;
 			UDATA cacheIndex = 0;
 			for (; cacheIndex < J9VMTHREAD_OBJECT_MONITOR_CACHE_SIZE; cacheIndex++) {
 				doMonitorLookupCacheSlot(&objectMonitorLookupCache[cacheIndex]);
 			}
-#else
-			doMonitorLookupCacheSlot(&vmThread->cachedMonitor);
-#endif /* J9VM_THR_LOCK_NURSERY */
 		}
 	}
 	reportScanningEnded(RootScannerEntity_MonitorLookupCaches);
@@ -847,6 +859,29 @@ MM_RootScanner::scanJVMTIObjectTagTables(MM_EnvironmentBase *env)
 }
 #endif /* J9VM_OPT_JVMTI */
 
+#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
+void 
+MM_RootScanner::scanDoubleMappedObjects(MM_EnvironmentBase *env)
+{
+	if (_singleThread || J9MODRON_HANDLE_NEXT_WORK_UNIT(env)) {
+		GC_HeapRegionIteratorVLHGC regionIterator(_extensions->heap->getHeapRegionManager());
+		MM_HeapRegionDescriptorVLHGC *region = NULL;
+		reportScanningStarted(RootScannerEntity_DoubleMappedObjects);
+		while (NULL != (region = regionIterator.nextRegion())) {
+			if (region->isArrayletLeaf()) {
+				J9Object *spineObject = (J9Object *)region->_allocateData.getSpine();
+				Assert_MM_true(NULL != spineObject);
+				J9PortVmemIdentifier *arrayletDoublemapID = &region->_arrayletDoublemapID;
+				if (NULL != arrayletDoublemapID->address) {
+					doDoubleMappedObjectSlot(spineObject, arrayletDoublemapID);
+				}
+			}
+		}
+		reportScanningEnded(RootScannerEntity_DoubleMappedObjects);
+	}
+}
+#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
+
 /**
  * Scan all root set references from the VM into the heap.
  * For all slots that are hard root references into the heap, the appropriate slot handler will be called.
@@ -887,6 +922,11 @@ MM_RootScanner::scanRoots(MM_EnvironmentBase *env)
 #endif /* J9VM_GC_FINALIZATION */
 	scanJNIGlobalReferences(env);
 
+	if (_jniWeakGlobalReferencesTableAsRoot) {
+		/* JNI Weak Global References table should be scanned as a hard root */
+		scanJNIWeakGlobalReferences(env);
+	}
+
 /* In the RT configuration, We can skip scanning the string table because
    all interned strings are in immortal memory and will not move. */
 	if(_stringTableAsRoot && (!_nurseryReferencesOnly && !_nurseryReferencesPossibly)){
@@ -925,7 +965,10 @@ MM_RootScanner::scanClearable(MM_EnvironmentBase *env)
 	}
 #endif /* J9VM_GC_FINALIZATION */
 
-	scanJNIWeakGlobalReferences(env);
+	if (!_jniWeakGlobalReferencesTableAsRoot) {
+		/* Skip Clearable phase if it was treated as a hard root already */
+		scanJNIWeakGlobalReferences(env);
+	}
 
 	scanPhantomReferenceObjects(env);
 	if(complete_phase_ABORT == scanPhantomReferencesComplete(env)) {
@@ -963,6 +1006,12 @@ MM_RootScanner::scanClearable(MM_EnvironmentBase *env)
 		scanJVMTIObjectTagTables(env);
 	}
 #endif /* J9VM_OPT_JVMTI */
+
+#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
+	if (_includeDoubleMap) {
+		scanDoubleMappedObjects(env);
+	}
+#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
 }
 
 /**
@@ -1011,6 +1060,12 @@ MM_RootScanner::scanAllSlots(MM_EnvironmentBase *env)
 		scanJVMTIObjectTagTables(env);
 	}
 #endif /* J9VM_OPT_JVMTI */
+
+#if defined(J9VM_GC_ENABLE_DOUBLE_MAP)
+        if (_includeDoubleMap) {
+                scanDoubleMappedObjects(env);
+        }
+#endif /* J9VM_GC_ENABLE_DOUBLE_MAP */
 
 	scanOwnableSynchronizerObjects(env);
 }

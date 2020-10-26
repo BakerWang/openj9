@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9.gc;
 
@@ -27,13 +27,10 @@ import com.ibm.j9ddr.vm29.j9.ObjectModel;
 import com.ibm.j9ddr.vm29.pointer.VoidPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9BuildFlags;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ClassPointer;
-import com.ibm.j9ddr.vm29.pointer.generated.J9IndexableObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.helper.J9ClassHelper;
-import com.ibm.j9ddr.vm29.pointer.helper.J9ObjectHelper;
 import com.ibm.j9ddr.vm29.structure.J9Object;
 import com.ibm.j9ddr.vm29.types.UDATA;
-
 
 public abstract class GCObjectIterator extends GCIterator
 {
@@ -94,20 +91,11 @@ public abstract class GCObjectIterator extends GCIterator
 	
 	private static GCObjectIterator getPointerArrayImpl(J9ObjectPointer object, boolean includeClassSlot) throws CorruptDataException 
 	{
-		if (J9BuildFlags.gc_arraylets) {
-			AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_POINTER_ARRAYLET_ITERATOR_VERSION);
-			switch (version.getAlgorithmVersion()) {
-				// Add case statements for new algorithm versions
-				default:
-					return new GCPointerArrayletIterator_V1(object, includeClassSlot);
-			}
-		} else {
-			AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_POINTER_ARRAY_ITERATOR_VERSION);
-			switch (version.getAlgorithmVersion()) {
-				// Add case statements for new algorithm versions
-				default:
-					return new GCPointerArrayIterator_V1(object, includeClassSlot);
-			}
+		AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_POINTER_ARRAYLET_ITERATOR_VERSION);
+		switch (version.getAlgorithmVersion()) {
+			// Add case statements for new algorithm versions
+			default:
+				return new GCPointerArrayletIterator_V1(object, includeClassSlot);
 		}
 	}
 

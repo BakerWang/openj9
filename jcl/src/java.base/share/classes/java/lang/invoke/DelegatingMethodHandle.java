@@ -1,7 +1,7 @@
-/*[INCLUDE-IF Sidecar19-SE-OpenJ9]*/
+/*[INCLUDE-IF Sidecar18-SE-OpenJ9 & !OPENJDK_METHODHANDLES]*/
 
 /*******************************************************************************
- * Copyright (c) 2017, 2017 IBM Corp. and others
+ * Copyright (c) 2017, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -19,10 +19,14 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 package java.lang.invoke;
+
+/*[IF Java15]*/
+import java.util.List;
+/*[ENDIF] Java15 */
 
 /*
  * Stub class to compile OpenJDK j.l.i.MethodHandleImpl
@@ -50,4 +54,16 @@ abstract class DelegatingMethodHandle extends MethodHandle {
 	static LambdaForm makeReinvokerForm(MethodHandle mh, int num, Object obj, String str, boolean flag, LambdaForm.NamedFunction nf1, LambdaForm.NamedFunction nf2) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
+	/*[IF Java10]*/
+	static LambdaForm makeReinvokerForm(MethodHandle mh, int num, Object obj, boolean flag, LambdaForm.NamedFunction nf1, LambdaForm.NamedFunction nf2) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	/*[ENDIF]*/
+
+/*[IF Java15]*/
+	@Override
+	boolean addRelatedMHs(List<MethodHandle> relatedMHs) {
+		return false;
+	}
+/*[ENDIF] Java15 */
 }

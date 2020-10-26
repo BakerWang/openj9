@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar17]*/
+/*[INCLUDE-IF Sidecar17 & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2009, 2017 IBM Corp. and others
+ * Copyright (c) 2009, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +18,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
@@ -26,31 +26,49 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+/*[IF Java12]*/
+import java.lang.constant.ClassDesc;
+import java.lang.constant.Constable;
+import java.lang.constant.DirectMethodHandleDesc;
+import java.lang.constant.DirectMethodHandleDesc.Kind;
+import java.lang.constant.MethodHandleDesc;
+import java.lang.constant.MethodTypeDesc;
+/*[ENDIF]*/
 import java.lang.invoke.MethodHandles.Lookup;
 import java.lang.reflect.Modifier;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
+import java.util.Objects;
+/*[IF Java12]*/
+import java.util.NoSuchElementException;
+import java.util.Optional;
+/*[ENDIF]*/
 // {{{ JIT support
 import java.util.concurrent.ConcurrentHashMap;
+
 /*[IF Sidecar19-SE]
 import jdk.internal.misc.Unsafe;
+/*[IF Java12]*/
+import jdk.internal.access.SharedSecrets;
+/*[ELSE]
 import jdk.internal.misc.SharedSecrets;
+/*[ENDIF] Java12 */
 import jdk.internal.reflect.ConstantPool;
-/*[IF Sidecar19-SE-OpenJ9]
-import java.lang.invoke.LambdaForm;
-/*[ENDIF]*/
 /*[ELSE]*/
 import sun.misc.Unsafe;
 import sun.misc.SharedSecrets;
 import sun.reflect.ConstantPool;
+
 /*[ENDIF]*/
 import com.ibm.jit.JITHelpers;
 import com.ibm.oti.util.Msg;
 // }}} JIT support
 import com.ibm.oti.vm.VM;
+import com.ibm.oti.vm.VMLangAccess;
 
 /**
  * A MethodHandle is a reference to a Java-level method.  It is typed according to the method's signature and can be
@@ -75,7 +93,11 @@ import com.ibm.oti.vm.VM;
  * @since 1.7
  */
 @VMCONSTANTPOOL_CLASS
-public abstract class MethodHandle {
+public abstract class MethodHandle 
+/*[IF Java12]*/
+	implements Constable
+/*[ENDIF]*/
+{
 	/* Ensure that these stay in sync with the MethodHandleInfo constants and VM constants in VM_MethodHandleKinds.h */
 	/* Order matters here - static and special are direct pointers */
 	static final byte KIND_BOUND = 0;
@@ -113,33 +135,17 @@ public abstract class MethodHandle {
 	/*[IF Panama]*/
 	static final byte KIND_NATIVE = 32;
 	/*[ENDIF]*/
-	/*[IF Valhalla-MVT]*/
-	static final byte KIND_DEFAULTVALUE = 33;
-	/*[ENDIF]*/
+	/*[IF Java12]*/
+	static final byte KIND_FILTERARGUMENTS_WITHCOMBINER = 33;
+	/*[ENDIF] Java12 */
 
-/*[IF Sidecar19-SE-OpenJ9]
+/*[IF Sidecar18-SE-OpenJ9]
 	MethodHandle asTypeCache = null;
 	LambdaForm form = null;	
 /*[ENDIF]*/	
 	
 	static final int PUBLIC_FINAL_NATIVE = Modifier.PUBLIC | Modifier.FINAL | Modifier.NATIVE | 0x1000 /* Synthetic */;
-	
-	private static final class UnsafeGetter {
-		public static final Unsafe myUnsafe = Unsafe.getUnsafe();
-	}
 
-	static final Unsafe getUnsafe() {
-		return UnsafeGetter.myUnsafe;
-	}
-	
-	private static final class JITHelpersGetter {
-		public static final JITHelpers myJITHelpers = JITHelpers.getHelpers();
-	}
-
-	static final JITHelpers getJITHelpers() {
-		return JITHelpersGetter.myJITHelpers;
-	}
-	
 	private static final int CUSTOM_THUNK_INVOCATION_COUNT = 1000;
 	private static final int DONT_CHECK_FOR_A_WHILE_COUNT  = -1000000000;
 
@@ -223,15 +229,6 @@ public abstract class MethodHandle {
 		ILGenMacros.load();
 	}
 
-	static long getJ9ClassFromClass(Class<?> c) {
-		JITHelpers h = getJITHelpers();
-		if (h.is32Bit()) {
-			return h.getJ9ClassFromClass32(c);
-		} else {
-			return h.getJ9ClassFromClass64(c);
-		}
-	}
-
 	/**
 	 * Creates a new MethodHandle of the same kind that
 	 * contains all the same fields, except the type is
@@ -250,7 +247,9 @@ public abstract class MethodHandle {
 	/*[IF ]*/
 	// Until the JIT can synthesize calls to virtual methods, we must synthesize calls to these static ones instead
 	/*[ENDIF]*/
-	private static MethodHandle asType(MethodHandle mh, MethodType newType) { return mh.asType(newType); }
+	private static MethodHandle asType(MethodHandle mh, MethodType newType) {
+		return mh.asType(newType);
+	}
 	/*[IF Sidecar19-SE]*/
 	private static MethodHandle asType(MethodHandle mh, MethodType newType, VarHandle varHandle) { return mh.asType(newType.appendParameterTypes(varHandle.getClass())); }
 	/*[ENDIF]*/
@@ -266,17 +265,17 @@ public abstract class MethodHandle {
 		this.kind = kind;
 		/* Must be called last as it may use previously set fields to modify the MethodType */
 		this.type = type;
-		enforceArityLimit(this.type);
+		enforceArityLimit(kind, this.type);
 		/* Must be called even laster as it uses the method type */
 		this.thunks = computeThunks(thunkArg);
-		/* Touch JITHelpers to make sure CP entries are resolved when needed later */
-		getJ9ClassFromClass(MethodHandle.class);
+		/* Touch thunks.invokeExactThunk so that its constant pool entry is resolved by the time it is used by the JIT */
+		long i = thunks.invokeExactThunk;
 	}
 	
 	MethodHandle(MethodHandle original, MethodType newType) {
 		this.kind = original.kind;
 		this.type = newType;
-		enforceArityLimit(newType);
+		enforceArityLimit(original.kind, newType);
 		this.thunks = original.thunks;
 		this.previousAsType = original.previousAsType;
 	}
@@ -320,6 +319,8 @@ public abstract class MethodHandle {
 	 * Invoke the receiver MethodHandle against the supplied arguments.  The types of the arguments 
 	 * must be an exact match for the MethodType of the MethodHandle.
 	 * 
+	 * @param args The argument list for the polymorphic signature call
+	 * 
 	 * @return The return value of the method
 	 * @throws Throwable - To ensure type safety, must be marked as throwing Throwable.
 	 * @throws WrongMethodTypeException - If the resolved method type is not exactly equal to the MethodHandle's type
@@ -331,6 +332,7 @@ public abstract class MethodHandle {
 	 * are not an exact match for the MethodType of the MethodHandle, conversions will be applied as 
 	 * possible.  The signature and the MethodHandle's MethodType must have the same number of arguments.
 	 * 
+	 * @param args The argument list for the polymorphic signature call
 	 * @return The return value of the method.  May be converted according to the conversion rules.
 	 * @throws Throwable - To ensure type safety, must be marked as throwing Throwable.
 	 * @throws WrongMethodTypeException  - If the resolved method type cannot be converted to the MethodHandle's type
@@ -338,18 +340,11 @@ public abstract class MethodHandle {
 	 */
 	public final native @PolymorphicSignature Object invoke(Object... args) throws Throwable, WrongMethodTypeException, ClassCastException;
 	
-	/*
-	 * Lookup all the VMDispatchTargets and store them into 'targets' array.
-	 * 'targets' must be large enough to hold all the dispatch targets.
-	 * 
-	 */
-	private static native boolean lookupVMDispatchTargets(long[] targets);
-	
 	/**
-     * The MethodType of the MethodHandle.  Invocation must match this MethodType.
-     *   
+	 * The MethodType of the MethodHandle.  Invocation must match this MethodType.
+	 *
 	 * @return the MethodType of the MethodHandle.  
-     */
+	 */
 	public MethodType type() {
 		return type;
 	}
@@ -421,9 +416,9 @@ public abstract class MethodHandle {
 				collectType = collectType.dropParameterTypes(spreadPosition + 1, spreadPosition + spreadCount);
 			}
 			
-			Class<?>[] parameters = type.arguments.clone();
+			Class<?>[] parameters = type.ptypes().clone();
 			Arrays.fill(parameters, spreadPosition, spreadPosition + spreadCount, componentType);
-			adapted = asType(MethodType.methodType(type.returnType, parameters));
+			adapted = asType(MethodType.methodType(type.returnType(), parameters));
 		}
 		return new SpreadHandle(adapted, collectType, arrayClass, spreadCount, spreadPosition);
 	}
@@ -517,11 +512,11 @@ public abstract class MethodHandle {
 			return localPreviousAsType;
 		}
 		MethodHandle handle = this;
-		Class<?> fromReturn = type.returnType;
-		Class<?> toReturn = newType.returnType;
+		Class<?> fromReturn = type.returnType();
+		Class<?> toReturn = newType.returnType();
 		if (fromReturn != toReturn) {
 			if(toReturn.isAssignableFrom(fromReturn)){
-				handle = cloneWithNewType(MethodType.methodType(toReturn, type.arguments));
+				handle = cloneWithNewType(MethodType.methodType(toReturn, type.ptypes()));
 			} else {
 				MethodHandle filter = ConvertHandle.FilterHelpers.getReturnFilter(fromReturn, toReturn, false);
 				handle = new FilterReturnHandle(this, filter);
@@ -541,7 +536,7 @@ public abstract class MethodHandle {
 	/**
 	 * Invoke the MethodHandle using an Object[] of arguments.  The array must contain at exactly type().parameterCount() arguments.
 	 * 
-	 * Each of the arguments in the array with be coerced to the appropriate type, if possible, based on the MethodType.
+	 * Each of the arguments in the array will be coerced to the appropriate type, if possible, based on the MethodType.
 	 * 
 	 * @param args An array of Arguments, with length at exactly type().parameterCount() to be used in the call.
 	 * @return An Object
@@ -558,11 +553,11 @@ public abstract class MethodHandle {
 		/* We know the only accepted argument length ahead of time,
 		 * so reject all calls with the wrong argument count
 		 */
-		if (argsLength != type.arguments.length) {
+		if (argsLength != type.parameterCount()) {
 			throw newWrongMethodTypeException(type, args, argsLength);
 		}
 		if (argsLength < 253) {
-			return IWAContainer.getMH(type.arguments.length).invokeExact(this, args);
+			return IWAContainer.getMH(type.parameterCount()).invokeExact(this, args);
 		}
 		return this.asSpreader(Object[].class, argsLength).invoke(args);
 	}
@@ -577,7 +572,7 @@ public abstract class MethodHandle {
 			}
 			classes[i] = c;
 		}
-		return WrongMethodTypeException.newWrongMethodTypeException(type, MethodType.methodType(type.returnType, classes));
+		return WrongMethodTypeException.newWrongMethodTypeException(type, MethodType.methodType(type.returnType(), classes));
 	}
 	static final class IWAContainer {
 		static MethodHandle getMH(int len){
@@ -613,9 +608,6 @@ public abstract class MethodHandle {
 		final static MethodHandle spreader_7 = MethodHandles.spreadInvoker(MethodType.genericMethodType(7), 0);
 		
 	}
-
-	
-	private static native Object invokeWithArgumentsHelper(MethodHandle mh, Object[] args);
 	
 	/**
 	 * Helper method to call {@link #invokeWithArguments(Object[])}.
@@ -681,11 +673,8 @@ public abstract class MethodHandle {
 		if (isVarArityNeeded) {
 			/* Convert the handle if initially not with variable arity */
 			if (!this.isVarargsCollector()) {
-				Class<?> lastClass = null;
-				try {
-					/* An exception is thrown if the MethodType has no arguments */
-					lastClass = this.type.lastParameterType();
-				} catch(RuntimeException e) {
+				Class<?> lastClass = this.type.lastParameterType();
+				if (void.class == lastClass) { /* there were no arguments */
 					throw new IllegalArgumentException();
 				}
 				/* IllegalArgumentException will be thrown out from asVarargsCollector 
@@ -732,6 +721,114 @@ public abstract class MethodHandle {
 		return this;
 	}
 	
+/*[IF Java12]*/
+	/**
+	 * Returns the nominal descriptor of this MethodHandle instance, or an empty Optional 
+	 * if construction is not possible.
+	 * 
+	 * @return Optional with a nominal descriptor of MethodHandle instance
+	 */
+	public Optional<MethodHandleDesc> describeConstable() {
+		try {
+			DirectMethodHandleDesc.Kind handleKind;
+
+			/* Define handle as a crackable type. If its not possible to do so this method should fail */
+			MethodHandleInfo handleInfo = Lookup.IMPL_LOOKUP.revealDirect(this);
+			switch(handleInfo.getReferenceKind()) {
+				case MethodHandleInfo.REF_getField:
+					handleKind = DirectMethodHandleDesc.Kind.GETTER;
+					break;
+				case MethodHandleInfo.REF_getStatic:
+					handleKind = DirectMethodHandleDesc.Kind.STATIC_GETTER;
+					break;
+				case MethodHandleInfo.REF_putField:
+					handleKind = DirectMethodHandleDesc.Kind.SETTER;
+					break;
+				case MethodHandleInfo.REF_putStatic:
+					handleKind = DirectMethodHandleDesc.Kind.STATIC_SETTER;
+					break;
+				case MethodHandleInfo.REF_invokeVirtual:
+					handleKind = DirectMethodHandleDesc.Kind.VIRTUAL;
+					break;
+				case MethodHandleInfo.REF_invokeStatic:
+					if (handleInfo.getDeclaringClass().isInterface()) {
+						handleKind = DirectMethodHandleDesc.Kind.INTERFACE_STATIC;
+					} else {
+						handleKind = DirectMethodHandleDesc.Kind.STATIC;
+					}
+					break;
+				case MethodHandleInfo.REF_invokeSpecial:
+					if (handleInfo.getDeclaringClass().isInterface()) {
+						handleKind = DirectMethodHandleDesc.Kind.INTERFACE_SPECIAL;
+					} else {
+						handleKind = DirectMethodHandleDesc.Kind.SPECIAL;
+					}
+					break;
+				case MethodHandleInfo.REF_newInvokeSpecial:
+					handleKind = DirectMethodHandleDesc.Kind.CONSTRUCTOR;	
+					break;
+				case MethodHandleInfo.REF_invokeInterface:
+					handleKind = DirectMethodHandleDesc.Kind.INTERFACE_VIRTUAL;
+					break;
+				default:
+					/* fail */
+					return Optional.empty();
+			}
+
+			/* create descriptor for the declaring class */
+			ClassDesc declaringDesc = handleInfo.getDeclaringClass().describeConstable().orElseThrow();
+
+			/* create handle descriptor */
+			MethodHandleDesc handleDesc;
+			switch(handleInfo.getReferenceKind()) {
+				/* field types */
+				case MethodHandleInfo.REF_getField:
+				case MethodHandleInfo.REF_getStatic:
+				case MethodHandleInfo.REF_putField:
+				case MethodHandleInfo.REF_putStatic:
+					ClassDesc fieldType = ((FieldHandle)this).fieldClass.describeConstable().orElseThrow();
+					handleDesc = MethodHandleDesc.ofField(handleKind, declaringDesc, handleInfo.getName(), fieldType);
+					break;
+				/* method types */
+				case MethodHandleInfo.REF_invokeVirtual:
+				case MethodHandleInfo.REF_invokeStatic:
+				case MethodHandleInfo.REF_invokeSpecial:
+				case MethodHandleInfo.REF_invokeInterface:
+					MethodTypeDesc lookupType = handleInfo.getMethodType().describeConstable().orElseThrow();
+					handleDesc = MethodHandleDesc.ofMethod(handleKind, declaringDesc, handleInfo.getName(), lookupType);
+					break;
+				/* constructor types */
+				case MethodHandleInfo.REF_newInvokeSpecial:
+					/* create list of descriptors for constructor parameters */
+					Class<?>[] handleParams = handleInfo.getMethodType().parameterArray();
+					int paramCount = handleParams.length;
+					ClassDesc[] paramDescs = new ClassDesc[paramCount];
+					for (int i = 0; i < paramCount; i++) {
+						paramDescs[i] = handleParams[i].describeConstable().orElseThrow();
+					}
+					handleDesc = MethodHandleDesc.ofConstructor(declaringDesc, paramDescs);
+					break;
+				default:
+					/* fail */
+					return Optional.empty();
+			}
+			return Optional.ofNullable(handleDesc);
+
+		} catch(IllegalArgumentException | SecurityException | NoSuchElementException e) {
+			/* fail */
+			return Optional.empty();
+		}
+	}
+/*[ENDIF]*/
+
+	/**
+	 * Bind the value as the first argument to the MethodHandle
+	 *
+	 * @param value the object to bind in
+	 * @return a new MethodHandle with the bound argument
+	 * @throws IllegalArgumentException if the value is not compatible with the first argument
+	 * @throws ClassCastException if the value can't be cast to the type of the first argument
+	 */
 	public MethodHandle bindTo(Object value) throws IllegalArgumentException, ClassCastException {
 		/*
 		 * Check whether the first parameter has a reference type assignable from value. Note that MethodType.parameterType(0) will
@@ -760,6 +857,31 @@ public abstract class MethodHandle {
 		return MethodHandles.insertArguments(this, 0, value);
 	}
 
+
+	/**
+	 * Check if a permutation is unnecessary
+	 * <p>
+	 * Comparing {@code permuteType} and {@code this.type} is not sufficent to determine if permutation
+	 * is needed. If two arguments have the same type, swapping them won't change the method type. we
+	 * have to check if the permute is identity permute.
+	 *
+	 * @param permuteType Type of the MethodHandle after the permutation
+	 * @param permute The permutation array
+	 * @return a boolean indicating if the permutation is unnecessary
+	 */
+	boolean isUnnecessaryPermute(MethodType permuteType, int... permute) {
+		if (!this.type.equals(permuteType)) {
+			return false;
+		}
+
+		for (int i = 0; i < permute.length; i++) {
+			if (permute[i] != i) {
+				return false;
+			}
+		}
+
+		return true;
+	}
 	/**
 	 * Create an interception point to allow PermuteHandle to merge 
 	 * permute(permute(originalHandle, ...), ...).
@@ -770,6 +892,10 @@ public abstract class MethodHandle {
 	 * </ul> 
 	 */
 	MethodHandle permuteArguments(MethodType permuteType, int... permute) {
+		if (isUnnecessaryPermute(permuteType, permute)) {
+			return this;
+		}
+
 		MethodHandle result = new PermuteHandle(permuteType, this, permute);
 		if (true) {
 			result = new BruteArgumentMoverHandle(permuteType, this, permute, EMPTY_CLASS_ARRAY, result);
@@ -780,10 +906,10 @@ public abstract class MethodHandle {
 	MethodHandle insertArguments(MethodHandle equivalent, MethodHandle unboxingHandle, int location, Object... values) {
 		MethodHandle result = equivalent;
 
-		// Wrap result in an ArgumentMoverHandle
+		// Wrap result in an BruteArgumentMoverHandle
 		int numValues = values.length;
 		MethodType mtype = equivalent.type();
-		int[] permute = ArgumentMoverHandle.insertPermute(ArgumentMoverHandle.identityPermute(mtype), location, numValues, -1);
+		int[] permute = BruteArgumentMoverHandle.insertPermute(BruteArgumentMoverHandle.identityPermute(mtype), location, numValues, -1);
 		if (true) {
 			result = new BruteArgumentMoverHandle(mtype, unboxingHandle, permute, values, result);
 		}
@@ -791,178 +917,6 @@ public abstract class MethodHandle {
 		return result;
 	}
 
-	/*
-	 * Return the result of J9_CP_TYPE(J9Class->romClass->cpShapeDescription, index)
-	 */
-	private static final native int getCPTypeAt(Class<?> clazz, int index);
-
-	/*
-	 * sun.reflect.ConstantPool doesn't have a getMethodTypeAt method.  This is the 
-	 * equivalent for MethodType.
-	 */
-	private static final native MethodType getCPMethodTypeAt(Class<?> clazz, int index);
-
-	/*
-	 * sun.reflect.ConstantPool doesn't have a getMethodHandleAt method.  This is the 
-	 * equivalent for MethodHandle.
-	 */
-	private static final native MethodHandle getCPMethodHandleAt(Class<?> clazz, int index);
-
-	private static final int BSM_ARGUMENT_SIZE = Short.SIZE / Byte.SIZE;
-	private static final int BSM_ARGUMENT_COUNT_OFFSET = BSM_ARGUMENT_SIZE;
-	private static final int BSM_ARGUMENTS_OFFSET = BSM_ARGUMENT_SIZE * 2;
-	private static final int BSM_LOOKUP_ARGUMENT_INDEX = 0;
-	private static final int BSM_NAME_ARGUMENT_INDEX = 1;
-	private static final int BSM_TYPE_ARGUMENT_INDEX = 2;
-	private static final int BSM_OPTIONAL_ARGUMENTS_START_INDEX = 3;
-
-	@SuppressWarnings("unused")
-	private static final MethodHandle resolveInvokeDynamic(Class<?> clazz, String name, String methodDescriptor, long bsmData) throws Throwable {
-		Unsafe unsafe = getUnsafe();
-		MethodHandle result = null;
-		MethodType type = null;
-
-		try {
-			type = MethodType.fromMethodDescriptorString(methodDescriptor, VM.getVMLangAccess().getClassloader(clazz));
-			int bsmIndex = unsafe.getShort(bsmData);
-			int bsmArgCount = unsafe.getShort(bsmData + BSM_ARGUMENT_COUNT_OFFSET);
-			long bsmArgs = bsmData + BSM_ARGUMENTS_OFFSET;
-			MethodHandle bsm = getCPMethodHandleAt(clazz, bsmIndex);
-			if (null == bsm) {
-				/*[MSG "K05cd", "unable to resolve 'bootstrap_method_ref' in '{0}' at index {1}"]*/
-				throw new NullPointerException(Msg.getString("K05cd", clazz.toString(), bsmIndex)); //$NON-NLS-1$
-			}
-			Object[] staticArgs = new Object[BSM_OPTIONAL_ARGUMENTS_START_INDEX + bsmArgCount];
-			/* Mandatory arguments */
-			staticArgs[BSM_LOOKUP_ARGUMENT_INDEX] = new MethodHandles.Lookup(clazz, false);
-			staticArgs[BSM_NAME_ARGUMENT_INDEX] = name;
-			staticArgs[BSM_TYPE_ARGUMENT_INDEX] = type;
-		
-			/* Static optional arguments */
-			ConstantPool cp = SharedSecrets.getJavaLangAccess().getConstantPool(clazz);
-
-			/* Check if we need to treat the last parameter specially when handling primitives.
-			 * The type of the varargs array will determine how primitive ints from the constantpool
-			 * get boxed: {Boolean, Byte, Short, Character or Integer}.
-			 */ 
-			boolean treatLastArgAsVarargs = bsm.isVarargsCollector();
-			Class<?> varargsComponentType = bsm.type.lastParameterType().getComponentType();
-			int bsmTypeArgCount = bsm.type.parameterCount();
-
-			for (int i = 0; i < bsmArgCount; i++) {
-				int staticArgIndex = BSM_OPTIONAL_ARGUMENTS_START_INDEX + i;
-				short index = unsafe.getShort(bsmArgs + (i * BSM_ARGUMENT_SIZE));
-				int cpType = getCPTypeAt(clazz, index);
-				Object cpEntry = null;
-				switch (cpType) {
-				case 1:
-					cpEntry = cp.getClassAt(index);
-					break;
-				case 2:
-					cpEntry = cp.getStringAt(index);
-					break;
-				case 3: {
-					int cpValue = cp.getIntAt(index);
-					Class<?> argClass;
-					if (treatLastArgAsVarargs && (staticArgIndex >= (bsmTypeArgCount - 1))) {
-						argClass = varargsComponentType;
-					} else {
-						argClass = bsm.type.parameterType(staticArgIndex);
-					}
-					if (argClass == Short.TYPE) {
-						cpEntry = (short) cpValue;
-					} else if (argClass == Boolean.TYPE) {
-						cpEntry = cpValue == 0 ? Boolean.FALSE : Boolean.TRUE;
-					} else if (argClass == Byte.TYPE) {
-						cpEntry = (byte) cpValue;
-					} else if (argClass == Character.TYPE) {
-						cpEntry = (char) cpValue;
-					} else {
-						cpEntry = cpValue;
-					}
-					break;
-				}
-				case 4:
-					cpEntry = cp.getFloatAt(index);
-					break;
-				case 5:
-					cpEntry = cp.getLongAt(index);
-					break;
-				case 6:
-					cpEntry = cp.getDoubleAt(index);
-					break;
-				case 13:
-					cpEntry = getCPMethodTypeAt(clazz, index);
-					break;
-				case 14:
-					cpEntry = getCPMethodHandleAt(clazz, index);
-					break;
-				default:
-					// Do nothing. The null check below will throw the appropriate exception.
-				}
-				
-				cpEntry.getClass();	// Implicit NPE
-				staticArgs[staticArgIndex] = cpEntry;
-			}
-
-			/* Take advantage of the per-MH asType cache */
-			CallSite cs = null;
-			switch(staticArgs.length) {
-			case 3:
-				cs = (CallSite) bsm.invoke(staticArgs[0], staticArgs[1], staticArgs[2]);
-				break;
-			case 4:
-				cs = (CallSite) bsm.invoke(staticArgs[0], staticArgs[1], staticArgs[2], staticArgs[3]);
-				break;
-			case 5:
-				cs = (CallSite) bsm.invoke(staticArgs[0], staticArgs[1], staticArgs[2], staticArgs[3], staticArgs[4]);
-				break;
-			case 6:
-				cs = (CallSite) bsm.invoke(staticArgs[0], staticArgs[1], staticArgs[2], staticArgs[3], staticArgs[4], staticArgs[5]);
-				break;
-			case 7:
-				cs = (CallSite) bsm.invoke(staticArgs[0], staticArgs[1], staticArgs[2], staticArgs[3], staticArgs[4], staticArgs[5], staticArgs[6]);
-				break;
-			default:
-				cs = (java.lang.invoke.CallSite) bsm.invokeWithArguments(staticArgs);
-				break;
-			}
-			
-			if (cs != null) {
-				MethodType callsiteType = cs.type();
-				if (callsiteType != type) {
-					throw WrongMethodTypeException.newWrongMethodTypeException(type, callsiteType);
-				}
-				result = cs.dynamicInvoker();
-			}
-		} catch(Throwable e) {
-
-			/*[IF Sidecar19-SE]*/
-			if (e instanceof Error) {
-				throw e;
-			}
-			/*[ENDIF]*/
-
-			if (type == null) {
-				throw new BootstrapMethodError(e);
-			}
-			
-			/* create an exceptionHandle with appropriate drop adapter and install that */
-			try {
-				MethodHandle thrower = MethodHandles.throwException(type.returnType(), BootstrapMethodError.class);
-				MethodHandle constructor = MethodHandles.Lookup.IMPL_LOOKUP.findConstructor(BootstrapMethodError.class, MethodType.methodType(void.class, Throwable.class));
-				result = MethodHandles.foldArguments(thrower, constructor.bindTo(e));
-				result = MethodHandles.dropArguments(result, 0, type.parameterList()); 
-			} catch (IllegalAccessException iae) {
-				throw new Error(iae);
-			} catch (NoSuchMethodException nsme) {
-				throw new Error(nsme);
-			}
-		}
-		
-		return result;
-	}
-	
 	@Override
 	public String toString() {
 		return "MethodHandle" + type.toString(); //$NON-NLS-1$
@@ -1028,75 +982,6 @@ public abstract class MethodHandle {
 		return asType(newType);
 	}
 	
-	/*[IF Sidecar19-SE]*/
-	/*
-	 * Used to convert an invokehandlegeneric bytecode into an AsTypeHandle + invokeExact OR to
-	 * convert an InvokeGenericHandle into an AsTypeHandle.
-	 * 
-	 * Allows us to only have the conversion logic for the AsTypeHandle and not worry about any
-	 * other similar conversions.
-	 */
-	@SuppressWarnings("unused")  /* Used by builder */
-	@VMCONSTANTPOOL_METHOD
-	private final MethodHandle forGenericInvokeVarHandle(MethodType newType, VarHandle varHandle) {
-		newType = newType.appendParameterTypes(varHandle.getClass());
-		if (this.type == newType) {
-			return this;
-		}
-		return asType(newType);
-	}
-	/*[ENDIF]*/
-	
-	@SuppressWarnings("unused")
-	@VMCONSTANTPOOL_METHOD
-	private static final MethodHandle sendResolveMethodHandle(
-			int cpRefKind,
-			Class<?> currentClass,
-			Class<?> referenceClazz,
-			String name,
-			String typeDescriptor,
-			ClassLoader loader) throws ClassNotFoundException, IllegalAccessException, NoSuchFieldException, NoSuchMethodException {
-		MethodHandles.Lookup lookup = new MethodHandles.Lookup(currentClass, false);
-		MethodType type = null;
-		
-		switch(cpRefKind){
-		case 1: /* getField */
-			return lookup.findGetter(referenceClazz, name, resolveFieldHandleHelper(typeDescriptor, loader));
-		case 2: /* getStatic */
-			return lookup.findStaticGetter(referenceClazz, name, resolveFieldHandleHelper(typeDescriptor, loader));
-		case 3: /* putField */
-			return lookup.findSetter(referenceClazz, name, resolveFieldHandleHelper(typeDescriptor, loader));
-		case 4: /* putStatic */
-			return lookup.findStaticSetter(referenceClazz, name, resolveFieldHandleHelper(typeDescriptor, loader));
-		case 5: /* invokeVirtual */
-			type = MethodType.fromMethodDescriptorString(typeDescriptor, loader);
-			return lookup.findVirtual(referenceClazz, name, type);
-		case 6: /* invokeStatic */
-			type = MethodType.fromMethodDescriptorString(typeDescriptor, loader);
-			return lookup.findStatic(referenceClazz, name, type);
-		case 7: /* invokeSpecial */ 
-			type = MethodType.fromMethodDescriptorString(typeDescriptor, loader);
-			return lookup.findSpecial(referenceClazz, name, type, currentClass);
-		case 8: /* newInvokeSpecial */
-			type = MethodType.fromMethodDescriptorString(typeDescriptor, loader);
-			return lookup.findConstructor(referenceClazz, type);
-		case 9: /* invokeInterface */
-			type = MethodType.fromMethodDescriptorString(typeDescriptor, loader);
-			return lookup.findVirtual(referenceClazz, name, type);
-		}
-		/* Can never happen */
-		throw new UnsupportedOperationException();
-	}
-	
-	/* Convert the field typedescriptor into a MethodType so we can reuse the parsing logic in 
-	 * #fromMethodDescritorString().  The verifier checks to ensure that the typeDescriptor is
-	 * a valid field descriptor so adding the "()V" around it is valid.
-	 */
-	private static final Class<?> resolveFieldHandleHelper(String typeDescriptor, ClassLoader loader) {
-		MethodType mt = MethodType.fromMethodDescriptorString("(" + typeDescriptor + ")V", loader); //$NON-NLS-1$ //$NON-NLS-2$
-		return mt.parameterType(0);
-	}
-	
 	/*[IF ]*/
 	/*
 	 * Used to preserve the MH on the stack when avoiding the call-in for
@@ -1110,6 +995,21 @@ public abstract class MethodHandle {
 		return this;
 	}
 	
+	/*[IF Java12]*/
+	/*[IF ]*/
+	/*
+	 * Used to preserve the MH on the stack when avoiding the call-in for
+	 * filterArgumentsWithCombinerHandle.  Must return 'this' so stackmapper will keep the MH
+	 * alive.
+	 */
+	/*[ENDIF]*/
+	@SuppressWarnings("unused")
+	@VMCONSTANTPOOL_METHOD
+	private MethodHandle filterArgumentsWithCombinerPlaceHolder() {
+		return this;
+	}
+	/*[ENDIF] Java12 */
+
 	/*[IF ]*/
 	/*
 	 * Used to preserve the MH on the stack when avoiding the call-in for
@@ -1149,19 +1049,6 @@ public abstract class MethodHandle {
 		return this;
 	}
 	
-	/*[IF ]*/
-	/*
-	 * Used to preserve the new objectRef on the stack when avoiding the call-in for
-	 * constructorHandles.  Must return 'this' so stackmapper will keep the object
-	 * alive.
-	 */
-	/*[ENDIF]*/
-	@SuppressWarnings("unused")
-	@VMCONSTANTPOOL_METHOD
-	private static Object constructorPlaceHolder(Object newObjectRef) {
-		return newObjectRef;
-	}
-
 	/*
 	 * TODO: Javadoc this and it's contract
 	 */
@@ -1169,9 +1056,21 @@ public abstract class MethodHandle {
 		throw new UnsupportedOperationException("Subclass must implement this"); //$NON-NLS-1$
 	}
 
-	static final void enforceArityLimit(MethodType type) {
-		if (type.argSlots > 254) {
-			throwIllegalArgumentExceptionForMTArgCount(type.argSlots);
+	static final void enforceArityLimit(byte kind, MethodType type) {
+		int argumentSlots = type.argSlots;
+		
+		/* The upper limit of argument slots is 255. For a constructor, 
+		 * there should be at most 253 argument slots, one slot for
+		 * MethodHandle itself and one slot for the placeholder of a 
+		 * newly created object at the native level. So the slot occupied
+		 * by the placeholder must be counted in when doing the arity check.
+		 */
+		if (KIND_CONSTRUCTOR == kind) {
+			argumentSlots += 1;
+		}
+		
+		if (argumentSlots > 254) {
+			throwIllegalArgumentExceptionForMTArgCount(argumentSlots);
 		}
 	}
 	
@@ -1203,12 +1102,49 @@ public abstract class MethodHandle {
 		return "KIND_#"+kind; //$NON-NLS-1$
 	}
 
-/*[IF Sidecar19-SE-OpenJ9]*/
+/*[IF Java15]*/
+	/**
+	 * Append to a list the child MethodHandle(s) which form "this" (parent MethodHandle).
+	 * 
+	 * @param relatedMHs the list where the child MethodHandle(s) are added. 
+	 * 
+	 * @return true if MethodHandles are added to the list, and false otherwise.
+	 */
+	abstract boolean addRelatedMHs(List<MethodHandle> relatedMHs);
+/*[ENDIF] Java15 */
+
+/*[IF OPENJDK_METHODHANDLES]*/
+	byte customizationCount;
+
+	String debugString() {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+
+	MethodHandle copyWith(MethodType mt, LambdaForm lf) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+
+	String internalValues() {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+
+	BoundMethodHandle bindArgumentL(int i, Object obj) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+
+	MethodHandle getMethodHandle() {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+
+	static native Object linkToStatic(Object... objs);
+/*[ENDIF] OPENJDK_METHODHANDLES */
+
+/*[IF Sidecar18-SE-OpenJ9]*/
 	MethodHandle(MethodType mt, LambdaForm lf) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
-	protected MethodHandle getTarget() {
+	MethodHandle getTarget() {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
@@ -1216,7 +1152,7 @@ public abstract class MethodHandle {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
-	public MethodHandle asTypeUncached(MethodType newType) {
+	MethodHandle asTypeUncached(MethodType newType) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
@@ -1225,20 +1161,30 @@ public abstract class MethodHandle {
 	}
 	
 	MethodHandle viewAsType(MethodType mt, boolean flag) {
-		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		return this.cloneWithNewType(mt);
 	}
 	
 	MemberName internalMemberName() {
+		/*[IF Java11]*/
+		/* Note: so far this method is only invoked by java.lang.invoke.ConstantBootstraps.getStaticFinal() 
+		 * to return a MemberName object, and only MemberName.isFinal() is invoked.
+		 */
+		return new MemberName(this);
+		/*[ELSE]
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		/*[ENDIF] Java11 */
 	}
 	
 	BoundMethodHandle rebind() {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
+/*[IF Sidecar18-SE-OpenJ9]*/
 	void customize() {
-		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		// this is an empty implementation to satisfy RI specific method calls
+		// https://github.com/eclipse/openj9/issues/7080
 	}
+/*[ENDIF]*/
 	
 	void updateForm(LambdaForm lf) {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
@@ -1268,7 +1214,7 @@ public abstract class MethodHandle {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 	
-	String internalProperties() {
+	Object internalProperties() {
 		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 /*[ENDIF]*/

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.view.dtfj.java;
 
@@ -40,15 +40,11 @@ import com.ibm.dtfj.java.JavaClass;
 import com.ibm.dtfj.java.JavaClassLoader;
 import com.ibm.dtfj.java.JavaObject;
 import com.ibm.j9ddr.view.dtfj.J9DDRDTFJUtils;
-import com.ibm.j9ddr.view.dtfj.image.J9DDRCorruptData;
 import com.ibm.j9ddr.view.dtfj.java.helper.DTFJJavaFieldHelper;
 import com.ibm.j9ddr.vm29.j9.J9ObjectFieldOffset;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ROMFieldShapePointer;
 import com.ibm.j9ddr.vm29.pointer.helper.J9ObjectHelper;
-import com.ibm.j9ddr.vm29.pointer.helper.J9ROMFieldShapeHelper;
-import com.ibm.j9ddr.vm29.pointer.helper.J9UTF8Helper;
-import com.ibm.j9ddr.vm29.types.U32;
 import com.ibm.j9ddr.vm29.view.dtfj.DTFJContext;
 
 public class DTFJJavaFieldInstance extends DTFJJavaField {
@@ -94,8 +90,8 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 					throw new IllegalArgumentException("Cannot determine the correct data type");
 			}
 		} catch (Throwable t) {
-			// the whitelist will cause IllegalArgumentException to be re-thrown
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			// the allowlist will cause IllegalArgumentException to be re-thrown
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 	
@@ -132,7 +128,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			boolean data = J9ObjectHelper.getBooleanField(jobj.getJ9ObjectPointer(), fieldOffset);
 			return data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -146,7 +142,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj, FIELD_BYTE);	
 			return (byte)data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -160,7 +156,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			char data = J9ObjectHelper.getCharField(jobj.getJ9ObjectPointer(), fieldOffset);
 			return data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -173,7 +169,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj,  FIELD_DOUBLE | FIELD_FLOAT | FIELD_LONG | FIELD_BYTE | FIELD_SHORT | FIELD_INTEGER | FIELD_CHAR);	
 			return Double.longBitsToDouble(data);
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -186,7 +182,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj,  FIELD_FLOAT | FIELD_LONG | FIELD_BYTE | FIELD_SHORT | FIELD_INTEGER | FIELD_CHAR);	
 			return Float.intBitsToFloat((int)data);
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -199,7 +195,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj,  FIELD_BYTE | FIELD_SHORT | FIELD_INTEGER | FIELD_CHAR);	
 			return (int)data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 	
@@ -212,7 +208,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj,  FIELD_LONG | FIELD_BYTE | FIELD_SHORT | FIELD_INTEGER | FIELD_CHAR);	
 			return data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -225,7 +221,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			long data = checkDataTypeConversion(jobj,  FIELD_BYTE | FIELD_SHORT);	
 			return (short)data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 
@@ -242,7 +238,7 @@ public class DTFJJavaFieldInstance extends DTFJJavaField {
 			String data = J9ObjectHelper.getStringField(jobj.getJ9ObjectPointer(), fieldOffset);
 			return data;
 		} catch (Throwable t) {
-			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, whitelist);
+			throw J9DDRDTFJUtils.handleAllButMemAccExAsCorruptDataException(DTFJContext.getProcess(), t, allowlist);
 		}
 	}
 	

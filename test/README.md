@@ -1,5 +1,5 @@
 <!--
-Copyright (c) 2016, 2017 IBM Corp. and others
+Copyright (c) 2016, 2020 IBM Corp. and others
 
 This program and the accompanying materials are made available under
 the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,183 +17,209 @@ OpenJDK Assembly Exception [2].
 [1] https://www.gnu.org/software/classpath/license.html
 [2] http://openjdk.java.net/legal/assembly-exception.html
 
-SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
 -->
 
-# How-to Run Tests
-Prerequisite:
-perl 5.10.1 or above with JSON and Text::CSV module installed; make 3.81 or above (recommend make 4.1 or above on windows); wget 1.14 or above.
+# Quick Start
 
-Let's create the following scenario:
-For the purpose of this example, you have an OpenJ9/Java9 build in an /openjdk directory on a Linux machine and you would like to run the OpenJ9 tests against it.  Currently, the tests reside in a separate repo, so you will first clone the test repo.  Let's assume you cloned them into /mytests/test in this example, here are the commands you'd run:
+Below is an example to run all sanity.functional tests against a JDK8
+Linux x86-64 cmprssptrs OpenJ9 SDK:
 
-         cd /mytests
-         git clone git@github.ibm.com:runtimes/test
+```
+    cd openj9/test
+    git clone https://github.com/AdoptOpenJDK/TKG.git
+    cd TKG
+    export TEST_JDK_HOME=/my/openj9/jdk
+    make compile               // downloads test related material/libs
+                               // and compiles test material
+    make _sanity.functional.regular    // generates makefiles and runs tests
+```
 
-Complete Tasks 1 *Configure Environment* and 2 *Compile tests*, described in general terms in the *Tasks in OpenJ9* section below.  Let's assume you have ant installed on the test machine.  Here are the specific commands you'd run:
+Please read [OpenJ9 Test User Guide](./docs/OpenJ9TestUserGuide.md) for
+details and other examples.  For example, if you wish to test a JDK11 version, 
+you would export JDK_VERSION=11 (default JDK_VERSION=8).
 
-         cd /mytests/test/TestConfig
-         export JAVA_BIN=/openjdk/bin       // this location changes depending on where the SDK you wish to test is located
-         export SPEC=linux_x86-64_cmprssptrs
-         export JCL_VERSION=latest
-         make -f run_configure.mk
-         make test
+## Prerequisites:
+Please read [Prerequisites.md](./docs/Prerequisites.md) for details on
+what tools should be installed on your test machine to run tests.
 
-# Tasks in OpenJ9 Test
-0. Configure environment:
-  * required environment variables, dependent jars and default values
+# FAQ
 
-      * asm-all-5.0.1.jar
-      * commons-cli-1.2.jar',
-      * commons-exec-1.1.jar',
-      * javassist-3.20.0-GA.jar',
-      * junit-4.10.jar',
-      * testng-6.10.jar',
-      * jcommander-1.48.jar'
-      * asmtools-6.0.jar
+While the [OpenJ9 Test User Guide](./docs/OpenJ9TestUserGuide.md) gives
+a more complete list of OpenJ9 test use cases, there are some
+frequently asked questions or common use cases by OpenJ9 developers
+listed below.
 
-      All references can be found in `getDependencies.pl`.
+## 1) How to compile tests in selected directories?
 
-            cd /<path to your cloned test repo>/test/TestConfig
-            export JAVA_BIN=/location_of_JVM_under_test
-            export SPEC=[linux_x86-64|linux_x86-64_cmprssptrs|...] platform_on_which_to_test
-            export JAVA_VERSION=[SE80|SE90] (SE90 default value)
-            export JCL_VERSION=[current|latest] (Temporary env var to allow us to support b136 -> b162 or latest CL in Java9, for OpenJ9/CCM build use latest)
-            export CLASSPATH=<path to ant-contrib.jar>
-            make -f run_configure.mk
-            make getdependency
+By default, `make compile` compiles all tests. This is the safest way
+to ensure all the test code needed has been compiled. However, there is a
+way to shortcut the compilation process to reduce compilation time. If
+`BUILD_LIST` is set, `make compile` will only compile the folder names
+names that match within `BUILD_LIST`.
 
-1. Compile tests:
-  * compile and run all tests
+```
+    export BUILD_LIST=functional/TestUtilities,functional/Java8andUp
+    make compile
+```
 
-            make test
-  * only compile but do not run tests
+## 2) How to add a test?
 
-            export BUILD_LIST=comma_separated_projects_to_be_compiled (defaults to all projects)
-            make compile
+### Add FV (functional) test
+Adding a testNG test as an example:
+- adding a single test class to an existing directory
+    - update testng.xml to add the test class to a existing <test> or
+    create a new <test>
+    - If the new <test> is created in testng.xml, playlist.xml should
+    be updated to add the new <test> based on [playlist.xsd](./TKG/playlist.xsd)
+    Supported test groups are `functional|system|openjdk|external|perf|jck`.
+    It is required to provide one group per test in playlist.xml.
+- adding additional new test methods for new Java10 functionality
+    - test should be automatically picked up
 
-2. Add more tests:
-    * for Java8/Java9 functionality
+### Add external test
+Please refer to the [video and tutorial](https://blog.adoptopenjdk.net/2018/02/adding-third-party-application-tests-adoptopenjdk)
+that describes how to add container-based 3rd party application tests
+(run inside of Docker images). These tests are added and run in the
+automated test builds at the AdoptOpenJDK project.
 
-            If you have added new features to OpenJ9, you
-            will likely need to add new tests.
-            Check out /test/TestExample for the format to use.
-            If you have many new test cases to add, then you may
-            want to copy the TestExample project, change the name,
-            replace the test examples with your own code, update the
-            build.xml and playlist.xml files to match your new Test
-            class names.
+## 3) How to disable a test?
+In playlist.xml, to disable a test target, add
 
-            Most OpenJ9 FV tests are written with TestNG.  We
-            leverage TestNG groups to create test make targets.
+ ```
+    <disabled>Reason for disabling test, should include issue number</disabled>
+ ```
 
-            This means that minimally your test source code should
-            belong to either level.sanity or level.extended group to
-            be included in main OpenJ9 builds.
+inside the `<test>` element that you want to disable.
 
-  * for a Java9 only features
+- Disable an individual test class
+    - testNG test
+add a line to `TestConfig/resources/excludes/latest_exclude_$(JDK_VERSION).txt`
+ file with issue number and specific specs to disable
+```
+    org.openj9.test.java.lang.management.TestOperatingSystemMXBean 123 linux_x86-64
+```
 
-3. Run tests:
-  * all tests
+## 4) How to execute a different group of tests?
 
-            make test (to compile & run)
-            make runtest (to run all tests without recompiling them)
-  * sanity tests
+Test can be run with different levels, groups and types or combination of two 
+(i.e., level.group, level.type, group.type) or three (i.e., level.group.type)
 
-            make sanity
-  * openjdk tests
+Supported levels are `sanity|extended`
 
-            make openjdk
-  * extended tests
+Supported groups  are `functional|system|openjdk|external|perf|jck`
 
-            make extended
-  * a specific individual test
+Supported types  are `regular|native`
 
-            make _generalExtendedTest_0
-  * a directory of tests
+```
+    make _sanity
+    make _functional
+    make _extended.perf
+    make _sanity.native
+    make _extended.functional.native
+```
 
-            make test_NameOfTestDir  (for example: make test_Jsr292 or make test_cmdLineTests.verbosetest, where nested directories separated by '.')
-  * component specific tests (WIP)
-  * against an IBM Java8 SDK
+## 5) How to execute a list of tests?
 
-            Same general instructions for Configure environment, and make test, but export JAVA_VERSION=SE80
-            explicitly before run_configure.mk step.
-  * against an IBM Java9 SDK
+A list of Tests can be executed through the `_testList` target followed by parameter `TESTLIST`. User can specify comma separated list of test names in `TESTLIST`. Note:  level, group, type or combinations of above (e.g., functional, sanity, sanity.native) are not supported in the TESTLIST.
 
-            No special steps to accomplish this, as JAVA_VERSION=SE90 by default, so simply need to Configure environment
-            and run make test.
-  * against a Java8 or Java9 OpenJDK/Oracle JDK (WIP)
+```
+make _testList TESTLIST=jit_jitt,jit_recognizedMethod,testSCCMLTests2_1
+```
 
-            We are annotating the OpenJ9 specific tests, so that they will be excluded from compilation and execution
-            against an implementation that they are not intended to test.
-  * rerun the failed tests from the last run
+## 6) How to execute disabled tests?
 
-            make failed
-  * with a different set of JVM options
+If a test is disabled using `<disabled>` tag in playlist.xml, it can be executed through specifying the test target or adding `disabled` in front of regular target.
 
-            There are 3 ways to add options to your test run.  If you simply want to add an option for a one-time run,
-            you can either override the original options by using JVM_OPTIONS="your options".  If you want to append
-            options to the set that are already there, use EXTRA_OPTIONS="your extra options".  For example,
-            make _jsr292_InDynTest_SE90_0 EXTRA_OPTIONS=-Xint
-            will append to those options already in the make target.
-4. Exclude tests:
-  * temporarily on all platforms
+```    
+    make _disabled.testA    // testA has <disabled> tag in playlist.xml  
+    make _disabled.sanity.functional
+    make _disabled.extended
+```
 
-            Add a line in the /test/TestConfig/default_exclude.txt file.
-            It is the same format that the OpenJDK tests use, name of test, defect number, platforms to exclude.
-            To exclude on all platforms, use generic-all.  For example:
+Disabled tests and reasons can also be printed through adding `echo.disabled` in front of regular target.
 
-            org.openj9.test.java.lang.management.TestOperatingSystemMXBean:testGetProcessCPULoad		121187         generic-all
+```    
+    make _echo.disabled.testA
+    make _echo.disabled.sanity.functional
+    make _echo.disabled.extended
+```
 
-            Note that we additionally added support to exclude individual methods of a test class, by using :methodName behind the class name
-            (OpenJDK does not support this currently).  In the example, only the testGetProcessCPULoad method from that class will be
-            excluded (on all platforms/specs).
-  * temporarily on specific platforms or architectures
+## 7) How to execute a directory of tests?
 
-            Same as excluding on all platforms, you add a line to the default_exclude.txt file, but with specific specs to exclude, for example:
+Only the tests in `BUILD_LIST` will be executed.
 
-            org.openj9.test.java.lang.management.TestOperatingSystemMXBean		121187         linux_x86-64
+```
+    export BUILD_LIST=functional/JIT_Test
+    make compile
+    make _sanity
+```
 
-            This example would exclude all test methods of the TestOperatingSystemMXBean from running on the linux_x86-64 platform.
-            Note: in OpenJ9 the defect numbers would associate with git issue numbers (OpenJDK defect numbers associate with their bug tracking system).
-  * permanently on all or specific platforms/archs
+## 8) How to run an individual JCK?
 
-            For tests that should NEVER run on particular platforms or architectures, we should not use the default_exclude.txt file.  To disable those tests,
-            we annotate the test class to be disabled.  To exclude MyTest from running on the aix platform, for example:
+Please read [How-to Run customized JCK test targets](https://github.com/AdoptOpenJDK/openjdk-tests/blob/master/jck/README.md) for details.
 
-            @Test(groups={ "level.sanity", "component.jit", "disabled.os.aix" })
-            public class MyTest {
-            ...
+## 9) How to run the test with different `JDK_VERSION` and `JDK_IMPL`?
 
-            We currently support the following exclusion groups:
-            disabled.os.<os> (i.e. disabled.os.aix)
-            disabled.arch.<arch> (i.e. disabled.arch.ppc)
-            disabled.bits.<bits> (i.e. disabled.bits.64)
-            disabled.spec.<spec> (i.e. disabled.spec.linux_x86-64)
-5. View results:
-  * in the console
+User can run tests against different jdk version and/or jdk
+implementation. While the default values of these variables match a
+typical use case for OpenJ9 developers, there are also many cases
+where developers need to verify features for a specific version or
+compare behaviour against a particular implementation.
 
-            OpenJ9 tests take advantage of the testNG logger.  If you want your test to print output, you are required to use the testng logger (and not
-            System.out.print statements).  In this way, we can not only direct that output to console, but also to various other clients (WIP).  At the end
-            of a test run, the results are summarized to show which tests passed / failed / skipped.  This gives you a quick view of the test names and numbers
-            in each category (passed/failed/skipped).  If you've piped the output to a file, or if you like scrolling up,
-            you can search for and find the specific output of the tests that failed (exceptions or any other logging that the test produces).
-  * in html files
+There is no extra step needed.
+By default, AUTO_DETECT is turned on, and the test framework will 
+auto detect SPEC, JDK_IMPL, and JDK_VERSION. Please read [Configure environment](./docs/OpenJ9TestUserGuide.md#1-configure-environment) for
+details and examples. 
 
-            Html (and xml) output from the tests are created and stored in a test_output_xxxtimestamp folder in the TestConfig directory (or from where
-            you ran "make test").  The output is organized by tests, each test having its own set of output.  If you open the index.html file in a web browser,
-            you will be able to see which tests passed, failed or were skipped, along with other information like execution time and error messages, exceptions
-            and logs from the individual test methods.
-  * in the cloud (WIP)
-6. Attach a debugger:
-  * to a particular test
+## 10) How to interpret test results?
+- test results summary
 
-            The command line that is run for each particular test is echo-ed to the console, so you can easily copy the command that is run.
-            You can then run the command directly (which is a direct call to the java executable, adding any additional options, including those
-            to attach a debugger.
-7. Move test into different make targets (layers):
-  * from extended to sanity (or vice versa)
+At the end of each run, test results summary will be printed:
 
-            Change the group annotated at the top of the test class from "level.extended" to "level.sanity" and the test will be automatically switched
-            from the extended target to the sanity target.
+```
+    TEST TARGETS SUMMARY
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    DISABLED test targets:
+	    cmdLineTester_pltest_tty_extended_0
+	    cmdLineTester_pltest_numcpus_notBound_0
+        ...
+    PASSED test targets:
+        cmdLineTester_javaAssertions_0
+        cmdLineTester_LazyClassLoading_0
+        ...
+    FAILED test targets:
+        TestAttachAPIEnabling_SE80_0
+        TestFileLocking_SE80_0
 
+    TOTAL: 91   EXECUTED: 84   PASSED: 82   FAILED: 2   DISABLED: 7   SKIPPED: 0
+    +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+```
+
+You can find the failed test output in console output.
+
+- TAP result
+
+A simple standardized TAP output is produced at the end of a test run,
+to provide developers with a convenient summary of the test results.
+It is also necessary as the tests used to verify OpenJ9 use a variety
+of test output formats. This summary is a way to standardize the output
+which allows CI tools to present results in a common way.
+
+- `SKIPPED` tests
+
+If a test is skipped, it means that this test cannot be run on this
+platform due to jvm options, platform requirements and/or test
+capabilities.
+
+## 11) How to rerun failed tests?
+
+`failed.mk` will be generated if there is any failed test target.
+We can rerun failed tests as following:
+
+```
+    make _failed
+```
+
+`failed.mk` will be over-written each test run. If you want to
+'save it', you can make a copy of the generated `failed.mk` file.

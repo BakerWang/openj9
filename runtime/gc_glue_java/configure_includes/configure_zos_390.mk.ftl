@@ -1,5 +1,5 @@
 ###############################################################################
-# Copyright (c) 2016, 2017 IBM Corp. and others
+# Copyright (c) 2016, 2020 IBM Corp. and others
 #
 # This program and the accompanying materials are made available under
 # the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,16 +17,14 @@
 # [1] https://www.gnu.org/software/classpath/license.html
 # [2] http://openjdk.java.net/legal/assembly-exception.html
 #
-# SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+# SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
 ###############################################################################
 
 include $(CONFIG_INCL_DIR)/configure_common.mk
-# Detect 64-bit vs. 31-bit
-# This overrides the value calculated in configure_common.mk
-ifneq (,$(findstring -64,$(SPEC)))
-  TEMP_TARGET_DATASIZE:=64
-else
-  TEMP_TARGET_DATASIZE:=31
+
+# Override datasize for 31-bit specs.
+ifeq (,$(findstring -64,$(SPEC)))
+  TEMP_TARGET_DATASIZE := 31
 endif
 
 # Notes (on disabled flags):
@@ -40,22 +38,16 @@ ifeq (zos_390-64_cmprssptrs, $(SPEC))
 		--enable-OMRTHREAD_LIB_ZOS \
 		--enable-OMR_ARCH_S390 \
 		--enable-OMR_ENV_DATA64 \
-		--enable-OMR_GC_COMPRESSED_POINTERS \
 		--enable-OMR_GC_CONCURRENT_SCAVENGER \
-		--enable-OMR_INTERP_COMPRESSED_OBJECT_HEADER \
-		--enable-OMR_INTERP_SMALL_MONITOR_SLOT \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
-endif
-
-ifeq (zos_390-64_cmprssptrs_purec, $(SPEC))
+		--enable-OMR_GC_IDLE_HEAP_MANAGER \
+		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS \
+		OMR_GC_POINTER_MODE=compressed
+ifneq (8,$(VERSION_MAJOR))
 	CONFIGURE_ARGS += \
-		--enable-OMRTHREAD_LIB_ZOS \
-		--enable-OMR_ARCH_S390 \
-		--enable-OMR_ENV_DATA64 \
-		--enable-OMR_GC_COMPRESSED_POINTERS \
-		--enable-OMR_INTERP_COMPRESSED_OBJECT_HEADER \
-		--enable-OMR_INTERP_SMALL_MONITOR_SLOT \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
+		OMR_ZOS_COMPILE_ARCHITECTURE=10 \
+		OMR_ZOS_COMPILE_TARGET=zOSV2R3 \
+		OMR_ZOS_LINK_COMPAT=ZOSV2R3
+endif
 endif
 
 ifeq (zos_390-64, $(SPEC))
@@ -64,15 +56,15 @@ ifeq (zos_390-64, $(SPEC))
 		--enable-OMR_ARCH_S390 \
 		--enable-OMR_ENV_DATA64 \
 		--enable-OMR_GC_CONCURRENT_SCAVENGER \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
-endif
-
-ifeq (zos_390-64_purec, $(SPEC))
+		--enable-OMR_GC_IDLE_HEAP_MANAGER \
+		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS \
+		OMR_GC_POINTER_MODE=full
+ifneq (8,$(VERSION_MAJOR))
 	CONFIGURE_ARGS += \
-		--enable-OMRTHREAD_LIB_ZOS \
-		--enable-OMR_ARCH_S390 \
-		--enable-OMR_ENV_DATA64 \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
+		OMR_ZOS_COMPILE_ARCHITECTURE=10 \
+		OMR_ZOS_COMPILE_TARGET=zOSV2R3 \
+		OMR_ZOS_LINK_COMPAT=ZOSV2R3
+endif
 endif
 
 ifeq (zos_390, $(SPEC))
@@ -80,32 +72,38 @@ ifeq (zos_390, $(SPEC))
 		--enable-OMRTHREAD_LIB_ZOS \
 		--enable-OMR_ARCH_S390 \
 		--enable-OMR_PORT_ZOS_CEEHDLRSUPPORT \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
-endif
-
-ifeq (zos_390_purec, $(SPEC))
-	CONFIGURE_ARGS += \
-		--enable-OMRTHREAD_LIB_ZOS \
-		--enable-OMR_ARCH_S390 \
-		--enable-OMR_PORT_ZOS_CEEHDLRSUPPORT \
-		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS
+		--enable-OMR_PORT_CAN_RESERVE_SPECIFIC_ADDRESS \
+		OMR_GC_POINTER_MODE=full
 endif
 
 CONFIGURE_ARGS += libprefix=lib exeext= solibext=.so arlibext=.a objext=.o
 
-CONFIGURE_ARGS += 'AS=c89'
-CONFIGURE_ARGS += 'CC=c89'
-CONFIGURE_ARGS += 'CXX=cxx'
+ifeq (default,$(origin AS))
+	AS=c89
+endif
+ifeq (default,$(origin CC))
+	CC=c89
+endif
+ifeq (default,$(origin CXX))
+	CXX=cxx
+endif
+
+CONFIGURE_ARGS += 'AS=$(AS)'
+CONFIGURE_ARGS += 'CC=$(CC)'
+CONFIGURE_ARGS += 'CXX=$(CXX)'
 CONFIGURE_ARGS += 'CCLINKEXE=$$(CC)'
 CONFIGURE_ARGS += 'CCLINKSHARED=cc'
-CONFIGURE_ARGS += 'CXXLINKEXE=cxx' # plus additional flags set by makefile
-CONFIGURE_ARGS += 'CXXLINKSHARED=cxx' # plus additional flags set by makefile
-CONFIGURE_ARGS += 'AR=ar'
+CONFIGURE_ARGS += 'CXXLINKEXE=$$(CXX)' # plus additional flags set by makefile
+CONFIGURE_ARGS += 'CXXLINKSHARED=$$(CXX)' # plus additional flags set by makefile
+CONFIGURE_ARGS += 'AR=$(AR)'
 
 CONFIGURE_ARGS += 'OMR_HOST_OS=zos'
 CONFIGURE_ARGS += 'OMR_HOST_ARCH=s390'
 CONFIGURE_ARGS += 'OMR_TARGET_DATASIZE=$(TEMP_TARGET_DATASIZE)'
 CONFIGURE_ARGS += 'OMR_TOOLCHAIN=xlc'
 
-CONFIGURE_ARGS += 'GLOBAL_CXXFLAGS=-W "c,SERVICE(j${uma.buildinfo.build_date})"'
-CONFIGURE_ARGS += 'GLOBAL_CFLAGS=-W "c,SERVICE(j${uma.buildinfo.build_date})"'
+CONFIGURE_ARGS += 'GLOBAL_CXXFLAGS=-Wc,"SERVICE(j${uma.buildinfo.build_date})"'
+CONFIGURE_ARGS += 'GLOBAL_CFLAGS=-Wc,"SERVICE(j${uma.buildinfo.build_date})"'
+
+# Some code (e.g. ddrgen test samples) uses native (EBCDIC) encoding.
+CONFIGURE_ARGS += --enable-native-encoding

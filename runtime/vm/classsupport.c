@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "j9.h"
@@ -50,9 +50,6 @@ static J9Class* internalFindArrayClass(J9VMThread* vmThread, J9Module *j9module,
 
 extern J9Method initialStaticMethod;
 extern J9Method initialSpecialMethod;
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-extern J9Method initialSharedMethod;
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 UDATA
 totalStaticSlotsForClass( J9ROMClass *romClass ) {
@@ -95,6 +92,10 @@ internalFindArrayClass(J9VMThread* vmThread, J9Module *j9module, UDATA arity, U_
 
 	vmThread->privateFlags &= ~J9_PRIVATE_FLAGS_CLOAD_NO_MEM;
 
+	if (arity > 255) {
+		goto done;
+	}
+
 	if (length > arity) {
 		firstChar = name[arity];
 		lastChar = name[length-1];
@@ -107,7 +108,7 @@ internalFindArrayClass(J9VMThread* vmThread, J9Module *j9module, UDATA arity, U_
 		/* the first level of arity is already present in the array class */
 		arity -= 1;
 
-	} else if (firstChar == 'L' && lastChar == ';') {
+	} else if (IS_REF_OR_VAL_SIGNATURE(firstChar) && lastChar == ';') {
 
 		name += arity + 1; /* 1 for 'L' */
 		length -= arity + 2; /* 2 for 'L and ';' */
@@ -115,7 +116,7 @@ internalFindArrayClass(J9VMThread* vmThread, J9Module *j9module, UDATA arity, U_
 		arrayClass = internalFindClassInModule(vmThread, j9module, name, length, classLoader, options);
 
 	} else {
-		return NULL;
+		goto done;
 	}
 
 	while (arrayClass && arity-- > 0) {
@@ -131,7 +132,7 @@ internalFindArrayClass(J9VMThread* vmThread, J9Module *j9module, UDATA arity, U_
 			}
 		}
 	}
-
+done:
 	return arrayClass;
 }
 
@@ -150,12 +151,11 @@ calculateArity(J9VMThread* vmThread, U_8* name, UDATA length)
 {
 	U_32 arity = 0;
 
-	while (length > 0 && *name == '[') {
+	while ((length > 0) && ('[' == *name)) {
 		name += 1;
 		length -= 1;
 		arity += 1;
 	}
-
 	return arity;
 }
 
@@ -169,26 +169,19 @@ findPrimitiveArrayClass(J9JavaVM* vm, jchar sigChar)
 		return vm->byteArrayClass;
 	case 'C':
 		return vm->charArrayClass;
-		break;
 	case 'I':
 		return vm->intArrayClass;
-		break;
 	case 'J':
 		return vm->longArrayClass;
-		break;
 	case 'S':
 		return vm->shortArrayClass;
-		break;
 	case 'Z':
 		return vm->booleanArrayClass;
-		break;
 #ifdef J9VM_INTERP_FLOAT_SUPPORT
 	case 'D':
 		return vm->doubleArrayClass;
-		break;
 	case 'F':
 		return vm->floatArrayClass;
-		break;
 #endif
 	default:
 		return NULL;
@@ -204,41 +197,98 @@ findPrimitiveArrayClass(J9JavaVM* vm, jchar sigChar)
 J9Class* 
 internalCreateArrayClass(J9VMThread* vmThread, J9ROMArrayClass* romClass, J9Class* elementClass)
 {
-	J9Class *result;
+	J9Class *result = NULL;
 	j9object_t heapClass = J9VM_J9CLASS_TO_HEAPCLASS(elementClass);
 	j9object_t protectionDomain = NULL;
 	J9ROMClass* arrayRomClass = (J9ROMClass*) romClass;
 	J9JavaVM *const javaVM = vmThread->javaVM;
 	UDATA options = 0;
+	BOOLEAN elementInitSuccess = TRUE;
 
-	if (J9_ARE_ANY_BITS_SET(elementClass->classFlags, J9ClassIsAnonymous)) {
-		options = J9_FINDCLASS_FLAG_ANON;
+#if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
+	/* When creating an array of valuetype elements, the array elements are initialized to the defaultValue of the
+	 * element type. As a result the element type must be fully initialized (if its a valuetype) before creating an
+	 * instance of the array. Element class init must be done before the arrayClass is created so that in the case
+	 * of an init failure the arrayClass is not temporarily exposed.
+	 */
+	if (J9_IS_J9CLASS_VALUETYPE(elementClass)) {
+		UDATA initStatus = elementClass->initializeStatus;
+		if ((J9ClassInitSucceeded != initStatus) && ((UDATA)vmThread != initStatus)) {
+			initializeClass(vmThread, elementClass);
+			if (NULL != vmThread->currentException) {
+				elementInitSuccess = FALSE;
+			}
+		}
+	}
+#endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
+
+	if (elementInitSuccess) {
+		if (J9ROMCLASS_IS_HIDDEN(elementClass->romClass)) {
+			options |= (J9_FINDCLASS_FLAG_HIDDEN | J9_FINDCLASS_FLAG_UNSAFE);
+			if (J9ROMCLASS_IS_OPTIONNESTMATE_SET(elementClass->romClass)) {
+				options |= J9_FINDCLASS_FLAG_CLASS_OPTION_NESTMATE;
+			}
+			if (J9ROMCLASS_IS_OPTIONSTRONG_SET(elementClass->romClass)) {
+				options |= J9_FINDCLASS_FLAG_CLASS_OPTION_STRONG;
+			} else {
+				options |= J9_FINDCLASS_FLAG_ANON;
+			}
+		} else if (J9_ARE_ANY_BITS_SET(elementClass->classFlags, J9ClassIsAnonymous)) {
+			options = J9_FINDCLASS_FLAG_ANON;
+		}
+
+		omrthread_monitor_enter(javaVM->classTableMutex);
+
+		if (NULL != heapClass) {
+			protectionDomain = J9VMJAVALANGCLASS_PROTECTIONDOMAIN(vmThread, heapClass);
+		}
+
+		result = internalCreateRAMClassFromROMClass(
+			vmThread,
+			elementClass->classLoader,
+			arrayRomClass,
+			options, /* options */
+			elementClass,
+			protectionDomain,
+			NULL,
+			J9_CP_INDEX_NONE,
+			LOAD_LOCATION_UNKNOWN,
+			NULL,
+			NULL);
 	}
 
-	omrthread_monitor_enter(javaVM->classTableMutex);
-
-	if (NULL != heapClass) {
-		protectionDomain = J9VMJAVALANGCLASS_PROTECTIONDOMAIN(vmThread, heapClass);
-	}
-
-	result = internalCreateRAMClassFromROMClass(
-		vmThread,
-		elementClass->classLoader,
-		arrayRomClass,
-		options, /* options */
-		elementClass,
-		protectionDomain,
-		NULL,
-		J9_CP_INDEX_NONE,
-		LOAD_LOCATION_UNKNOWN,
-		NULL,
-		NULL);
 	return result;
 }
 
+/**
+ * Peek the classHashTable to see if the `className` class has already been loaded by `classLoader`.
+ *
+ * @param currentThread pointer to the current J9VMThread
+ * @param classLoader pointer to the J9ClassLoader being probed
+ * @param className pointer to the U_8 representation of the classaname.  Doesn't need to be null terminated
+ * @param classNameLength length of the className
+ * @return a J9Class pointer if the class has already been loaded in this loader.  Null otherwise.
+ */
+J9Class*
+peekClassHashTable(J9VMThread* currentThread, J9ClassLoader* classLoader, U_8* className, UDATA classNameLength)
+{
+	J9Class * ramClass = NULL;
+	J9JavaVM* vm = currentThread->javaVM;
+	BOOLEAN fastMode = J9_ARE_ALL_BITS_SET(vm->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE);
+
+	/* If -XX:+FastClassHashTable is enabled, do not lock anything to do the initial table peek */
+	if (!fastMode) {
+		omrthread_monitor_enter(vm->classTableMutex);
+	}
+	ramClass = hashClassTableAt(classLoader, className, classNameLength);
+	if (!fastMode) {
+		omrthread_monitor_exit(vm->classTableMutex);
+	}
+	return ramClass;
+}
 
 J9Class*  
-internalFindClassString(J9VMThread* currentThread, j9object_t moduleName, j9object_t className, J9ClassLoader* classLoader, UDATA options)
+internalFindClassString(J9VMThread* currentThread, j9object_t moduleName, j9object_t className, J9ClassLoader* classLoader, UDATA options, UDATA allowedBitsForClassName)
 {
 	J9Class *result = NULL;
 	J9JavaVM* vm = currentThread->javaVM;
@@ -256,32 +306,42 @@ internalFindClassString(J9VMThread* currentThread, j9object_t moduleName, j9obje
 	if (NULL == result) {
 		J9Module **findResult = NULL;
 		J9Module *j9module = NULL;
-		char localBuf[256];
-		char *utf8Name = NULL;
+		U_8 localBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
+		U_8 *utf8Name = NULL;
 		UDATA utf8Length = 0;
+		UDATA stringFlags = J9_STR_NULL_TERMINATE_RESULT;
 		PORT_ACCESS_FROM_JAVAVM(vm);
 
-		if (NULL != moduleName) {
-			J9Module module = {0};
-			J9Module *modulePtr = &module;
-
-			modulePtr->moduleName = moduleName;
-			findResult = hashTableFind(classLoader->moduleHashTable, &modulePtr);
-			if (NULL != findResult) {
-				j9module = *findResult;
-			}
+		if (CLASSNAME_INVALID == allowedBitsForClassName) {
+			stringFlags |= J9_STR_XLAT;
 		}
 
-		utf8Name = copyStringToUTF8WithMemAlloc(currentThread, className, J9_STR_XLAT, "", localBuf, sizeof(localBuf));
+		utf8Name = (U_8*)copyStringToUTF8WithMemAlloc(currentThread, className, stringFlags, "", 0, (char *)localBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, &utf8Length);
 		if (NULL == utf8Name) {
 			/* Throw out-of-memory */
 			setNativeOutOfMemoryError(currentThread, 0, 0);
 			return NULL;
 		}
-		utf8Length = (UDATA)getStringUTF8Length(currentThread, className);
-		result = internalFindClassInModule(currentThread, j9module, (U_8 *)utf8Name, utf8Length, classLoader, options);
-		if (utf8Name != localBuf) {
-			j9mem_free_memory(utf8Name);
+
+		/* Make sure the name is legal */
+		if ((CLASSNAME_INVALID == allowedBitsForClassName)
+			|| (CLASSNAME_INVALID != verifyQualifiedName(currentThread, utf8Name, utf8Length, allowedBitsForClassName))
+		) {
+			if (NULL != moduleName) {
+				J9Module module = {0};
+				J9Module *modulePtr = &module;
+
+				modulePtr->moduleName = moduleName;
+				findResult = hashTableFind(classLoader->moduleHashTable, &modulePtr);
+				if (NULL != findResult) {
+					j9module = *findResult;
+				}
+			}
+
+			result = internalFindClassInModule(currentThread, j9module, utf8Name, utf8Length, classLoader, options);
+			if (utf8Name != localBuf) {
+				j9mem_free_memory(utf8Name);
+			}
 		}
 	}
 	return result;
@@ -307,7 +367,7 @@ internalRunPreInitInstructions(J9Class * ramClass, J9VMThread * vmThread)
 		U_32 description = 0;
 		UDATA i;
 		
-		BOOLEAN isAnonClass = J9_ARE_ANY_BITS_SET(romClass->extraModifiers, J9AccClassAnonClass);
+		BOOLEAN isAnonClass = J9_ARE_ANY_BITS_SET(romClass->extraModifiers, J9AccClassAnonClass | J9AccClassHidden);
 
 		for (i = 0; i < ramConstantPoolCount; ++i) {
 			if (descriptionCount == 0) {
@@ -339,62 +399,39 @@ internalRunPreInitInstructions(J9Class * ramClass, J9VMThread * vmThread)
 					((J9RAMFieldRef *) ramConstantPool)[i].valueOffset = -1;
 					break;
 
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-				case J9CPTYPE_SHARED_METHOD: {
-					J9UTF8 *nameUTF, *className;
-					J9ROMClassRef *romClassRef;
-					UDATA methodIndex = sizeof(J9Class) + sizeof(UDATA);
-					romMethodRef = ((J9ROMMethodRef *) romConstantPool) + i;
-					romClassRef = ((J9ROMClassRef *) romConstantPool) + romMethodRef->classRefCPIndex;
-					className = J9ROMCLASSREF_NAME(romClassRef);
-					nas = J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef);
-					nameUTF = J9ROMNAMEANDSIGNATURE_NAME(nas);
-					if ((J9UTF8_LITERAL_EQUALS(J9UTF8_DATA(className), J9UTF8_LENGTH(className), "java/lang/invoke/MethodHandle"))
-					&& (J9UTF8_LITERAL_EQUALS(J9UTF8_DATA(nameUTF), J9UTF8_LENGTH(nameUTF), "invokeExact")
-					|| J9UTF8_LITERAL_EQUALS(J9UTF8_DATA(nameUTF), J9UTF8_LENGTH(nameUTF), "invoke"))) {
-						methodIndex = methodTypeIndex++;
-					}
-					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = (methodIndex << 8) +
-						getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
-					((J9RAMMethodRef *) ramConstantPool)[i].method = vm->initialMethods.initialSharedMethod;
-					break;
-				}
-#endif /* !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 				case J9CPTYPE_HANDLE_METHOD:
 					romMethodRef = ((J9ROMMethodRef *) romConstantPool) + i;
 					nas = J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef);
 					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = (methodTypeIndex << 8) +
 						getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
 					methodTypeIndex++;
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 					/* In case MethodHandle.invoke[Exact] is called via invokestatic */
 					((J9RAMMethodRef *) ramConstantPool)[i].method = vm->initialMethods.initialStaticMethod;
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					break;
 
 				case J9CPTYPE_INSTANCE_METHOD:
+				case J9CPTYPE_INTERFACE_INSTANCE_METHOD:
 					romMethodRef = ((J9ROMMethodRef *) romConstantPool) + i;
 					nas = J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef);
-					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = ((sizeof(J9Class) + sizeof(UDATA)) << 8) +
+					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = (J9VTABLE_INITIAL_VIRTUAL_OFFSET << 8) +
 						getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
 					((J9RAMMethodRef *) ramConstantPool)[i].method = vm->initialMethods.initialSpecialMethod;
 					break;
 
 				case J9CPTYPE_STATIC_METHOD:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
+				case J9CPTYPE_INTERFACE_STATIC_METHOD:
 					romMethodRef = ((J9ROMMethodRef *) romConstantPool) + i;
 					nas = J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef);
 					/* In case this CP entry is shared with invokevirtual */
-					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = ((sizeof(J9Class) + sizeof(UDATA)) << 8) +
+					((J9RAMMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = (J9VTABLE_INITIAL_VIRTUAL_OFFSET << 8) +
 						getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					((J9RAMStaticMethodRef *) ramConstantPool)[i].method = vm->initialMethods.initialStaticMethod;
 					break;
 
 				case J9CPTYPE_INTERFACE_METHOD:
 					romMethodRef = ((J9ROMMethodRef *) romConstantPool) + i;
 					nas = J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef);
-					((J9RAMInterfaceMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
+					((J9RAMInterfaceMethodRef *) ramConstantPool)[i].methodIndexAndArgCount = J9_ITABLE_INDEX_UNRESOLVED | getSendSlotsFromSignature(J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_SIGNATURE(nas)));
 					break;
 
 				case J9CPTYPE_METHOD_TYPE:
@@ -490,7 +527,6 @@ resolveKnownClass(J9JavaVM * vm, UDATA index)
  * @param classNameLength Length of the class name
  * @param classLoader Class loader object
  * @param options
- * @param flags contains 0 or BOOTSTRAP_ENTRIES_ONLY
  * @param [in/out] localBuffer contains values for entryIndex, loadLocationType and cpEntryUsed. This pointer can't be NULL.
  * @return pointer to class if locally defined, 0 if not defined, -1 if we cannot do dynamic load
  *
@@ -500,7 +536,7 @@ resolveKnownClass(J9JavaVM * vm, UDATA index)
  */
 
 static IDATA
-callFindLocallyDefinedClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDATA classNameLength, J9ClassLoader* classLoader, UDATA options, UDATA flags, J9TranslationLocalBuffer *localBuffer) {
+callFindLocallyDefinedClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDATA classNameLength, J9ClassLoader* classLoader, UDATA options, J9TranslationLocalBuffer *localBuffer) {
 	IDATA findResult = -1;
 	J9TranslationBufferSet *dynamicLoadBuffers = vmThread->javaVM->dynamicLoadBuffers;
 	J9ROMClass* returnVal = NULL;
@@ -510,42 +546,37 @@ callFindLocallyDefinedClass(J9VMThread* vmThread, J9Module *j9module, U_8* class
 	/* localBuffer should not be NULL */
 	Assert_VM_true(NULL != localBuffer);
 
-	omrthread_monitor_enter(vmThread->javaVM->classMemorySegments->segmentMutex);
 	if (NULL != dynamicLoadBuffers) {
 		 J9ClassPathEntry* classPathEntries = NULL;
 		 if (classLoader == vmThread->javaVM->systemClassLoader) {
 			 classPathEntries = classLoader->classPathEntries;
 		 }
-
-
 		 TRIGGER_J9HOOK_VM_FIND_LOCALLY_DEFINED_CLASS(vmThread->javaVM->hookInterface, vmThread, classLoader, j9module, (char*)className, classNameLength,
 						classPathEntries, classLoader->classPathEntryCount, -1, NULL, 0, 0,
 						(IDATA *) &localBuffer->entryIndex, returnVal);
 
 		findResult = (IDATA) returnVal;
-
- 		omrthread_monitor_exit(vmThread->javaVM->classMemorySegments->segmentMutex);
 		if (0 == findResult) {
 			TRIGGER_J9HOOK_VM_FIND_LOCALLY_DEFINED_CLASS_FROM_FILESYSTEM(vmThread->javaVM->hookInterface, 
 																		 vmThread, 
 																		 (const char *)className, 
 																		 classNameLength,
-																		 classLoader, 
-																		 flags,
+																		 classLoader,
 																		 &classFound,
 																		 returnPointer);
-			if (returnVal != NULL){
+
+			if (returnVal != NULL) {
 				findResult = classFound;
 			} else {
 				findResult = dynamicLoadBuffers->findLocallyDefinedClassFunction(vmThread, j9module, className, (U_32)classNameLength, classLoader, classPathEntries,
-						classLoader->classPathEntryCount, options, flags, localBuffer);
+						classLoader->classPathEntryCount, options, localBuffer);
 				if ((-1 == findResult) && (J9_PRIVATE_FLAGS_REPORT_ERROR_LOADING_CLASS & vmThread->privateFlags)) {
 					vmThread->privateFlags |= J9_PRIVATE_FLAGS_FAILED_LOADING_REQUIRED_CLASS;
 				}
 			}
 		} else {
 			/* The class is found in shared class cache. */
-			if (J2SE_VERSION(vmThread->javaVM) >= J2SE_19) {
+			if (J2SE_VERSION(vmThread->javaVM) >= J2SE_V11) {
 				if (localBuffer->entryIndex >= 0) {
 					localBuffer->loadLocationType = LOAD_LOCATION_CLASSPATH;
 				} else {
@@ -555,8 +586,6 @@ callFindLocallyDefinedClass(J9VMThread* vmThread, J9Module *j9module, U_8* class
 				localBuffer->loadLocationType = LOAD_LOCATION_CLASSPATH;
 			}
 		}
-	} else {
- 		omrthread_monitor_exit(vmThread->javaVM->classMemorySegments->segmentMutex);
 	}
 	return findResult;
 }
@@ -583,20 +612,14 @@ attemptDynamicClassLoad(J9VMThread* vmThread, J9Module *j9module, U_8* className
 	Trc_VM_internalFindClass_attemptDynamicClassLoad_entry(vmThread, classLoader->classLoaderObject, classNameLength, className);
 
 	/* try to load classes from system class loader */
-	if ((J2SE_VERSION(vmThread->javaVM) >= J2SE_19)
+	if ((J2SE_VERSION(vmThread->javaVM) >= J2SE_V11)
 		|| ((NULL != classLoader->classPathEntries) && (classLoader == vmThread->javaVM->systemClassLoader))
 	) {
 		IDATA findResult = -1;
 		J9TranslationLocalBuffer localBuffer = {J9_CP_INDEX_NONE, LOAD_LOCATION_UNKNOWN, NULL};
 
-		if (J9_JCL_FLAG_CLASSLOADERS & vmThread->javaVM->jclFlags) {
-			findResult = callFindLocallyDefinedClass(vmThread, j9module, className, classNameLength, classLoader, options, 0, &localBuffer);
-		} else {
-			findResult = callFindLocallyDefinedClass(vmThread, j9module, className, classNameLength, classLoader, options, BCU_BOOTSTRAP_ENTRIES_ONLY, &localBuffer);
-			if (-1 == findResult) {
-				findResult = callFindLocallyDefinedClass(vmThread, j9module, className, classNameLength, classLoader, options, BCU_NON_BOOTSTRAP_ENTRIES_ONLY, &localBuffer);
-			}
-		}
+		findResult = callFindLocallyDefinedClass(vmThread, j9module, className, classNameLength, classLoader, options, &localBuffer);
+
 		if (-1 != findResult) {
 			J9TranslationBufferSet *dynamicLoadBuffers = vmThread->javaVM->dynamicLoadBuffers;
 
@@ -680,7 +703,7 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
 		J9JavaVM * vm = vmThread->javaVM;
 
 		Trc_VM_internalFindClass_sendLoadClass(vmThread, classNameLength, className, classNameString, classLoader->classLoaderObject);
-		sendLoadClass(vmThread, classLoader->classLoaderObject, classNameString, 0, 0);
+		sendLoadClass(vmThread, classLoader->classLoaderObject, classNameString);
 		sendLoadClassResult = (j9object_t) vmThread->returnValue;
 		if (NULL == sendLoadClassResult) {
 			j9object_t exception;
@@ -720,7 +743,7 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
  			Trc_VM_internalFindClass_sentLoadClass(vmThread, classNameLength, className, sendLoadClassResult);
  			Assert_VM_true(J9VM_IS_INITIALIZED_HEAPCLASS(vmThread, sendLoadClassResult));
 			foundClass = J9VM_J9CLASS_FROM_HEAPCLASS(vmThread, sendLoadClassResult);
-			omrthread_monitor_enter(vmThread->javaVM->classTableMutex);
+			omrthread_monitor_enter(vm->classTableMutex);
 			/* Verify that the actual name matches the expected */
 			foundClassName = J9ROMCLASS_CLASSNAME(foundClass->romClass);
 			if (!J9UTF8_DATA_EQUALS(className, classNameLength, J9UTF8_DATA(foundClassName), J9UTF8_LENGTH(foundClassName))) {
@@ -737,7 +760,7 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
 			 			J9Class * loadingConstraintError = j9bcv_satisfyClassLoadingConstraint(vmThread, classLoader, foundClass);
 
 						if (loadingConstraintError != NULL) {
-							omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+							omrthread_monitor_exit(vm->classTableMutex);
 							setClassLoadingConstraintError(vmThread, classLoader, loadingConstraintError);
 							return NULL;
 						}
@@ -749,9 +772,9 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
 					if (hashClassTableAtPut(vmThread, classLoader, className, classNameLength, foundClass)) {
 						/* Failed to store the class - GC and retry */
 
-						omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
-						vmThread->javaVM->memoryManagerFunctions->j9gc_modron_global_collect_with_overrides(vmThread, J9MMCONSTANT_EXPLICIT_GC_NATIVE_OUT_OF_MEMORY);
-						omrthread_monitor_enter(vmThread->javaVM->classTableMutex);
+						omrthread_monitor_exit(vm->classTableMutex);
+						vm->memoryManagerFunctions->j9gc_modron_global_collect_with_overrides(vmThread, J9MMCONSTANT_EXPLICIT_GC_NATIVE_OUT_OF_MEMORY);
+						omrthread_monitor_enter(vm->classTableMutex);
 
 						/* See if a class of this name is already in the table - if not, try the add again */
 
@@ -760,7 +783,7 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
 							if (hashClassTableAtPut(vmThread, classLoader, className, classNameLength, foundClass)) {
 								/* Add failed again, throw native OOM */
 
-								omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+								omrthread_monitor_exit(vm->classTableMutex);
 								setNativeOutOfMemoryError(vmThread, 0, 0);
 								return NULL;
 							}
@@ -780,7 +803,7 @@ callLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength, J9Cla
 					}
 				}
 			}
-			omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+			omrthread_monitor_exit(vm->classTableMutex);
  		}
 	} else {
 		foundClass = NULL;
@@ -818,7 +841,7 @@ waitForContendedLoadClass(J9VMThread* vmThread, J9ContendedLoadTableEntry *table
 	Assert_VM_mustHaveVMAccess(vmThread);
 	/* get here if and only if someone else is loading the class */
 	/* give up the classloader monitor to allow other threads to run */
-	monitorOwner = getObjectMonitorOwner(vmThread->javaVM, vmThread, tableEntry->classLoader->classLoaderObject, &recursionCount);
+	monitorOwner = getObjectMonitorOwner(vmThread->javaVM, tableEntry->classLoader->classLoaderObject, &recursionCount);
 	if (monitorOwner == vmThread) {
 		Trc_VM_waitForContendedLoadClass_release_object_monitor(vmThread, vmThread, tableEntry->classLoader, classNameLength, className);
 		for (i = 0; i < recursionCount; ++i) {
@@ -948,9 +971,10 @@ arbitratedLoadClass(J9VMThread* vmThread, U_8* className, UDATA classNameLength,
 static VMINLINE J9Class *  
 loadNonArrayClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDATA classNameLength, J9ClassLoader* classLoader, UDATA options, j9object_t *exception)
 {
+	J9JavaVM * const vm = vmThread->javaVM;
 	J9Class * foundClass = NULL;
 	BOOLEAN lockLoaderMonitor = FALSE;
-	BOOLEAN fastMode = J9_ARE_ALL_BITS_SET(vmThread->javaVM->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE);
+	BOOLEAN fastMode = J9_ARE_ALL_BITS_SET(vm->extendedRuntimeFlags, J9_EXTENDED_RUNTIME_FAST_CLASS_HASH_TABLE);
 	BOOLEAN loaderMonitorLocked = FALSE;
 
 	vmThread->privateFlags &= ~J9_PRIVATE_FLAGS_CLOAD_NO_MEM;
@@ -962,11 +986,11 @@ loadNonArrayClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDAT
 		 * Test in decreasing probability of failure.
 		 * J9_EXTENDED_RUNTIME_CLASSLOADER_LOCKING_ENABLED is true by default
 		 */
-		lockLoaderMonitor = (classLoader != vmThread->javaVM->systemClassLoader)
+		lockLoaderMonitor = (classLoader != vm->systemClassLoader)
 				&& (NULL != classLoader->classLoaderObject)
 				&& (0 == (options & J9_FINDCLASS_FLAG_EXISTING_ONLY))
 				&& (J9_EXTENDED_RUNTIME_CLASSLOADER_LOCKING_ENABLED ==
-						(vmThread->javaVM->extendedRuntimeFlags & J9_EXTENDED_RUNTIME_CLASSLOADER_LOCKING_ENABLED));
+						(vm->extendedRuntimeFlags & J9_EXTENDED_RUNTIME_CLASSLOADER_LOCKING_ENABLED));
 	}
 
 	/* If -XX:+FastClassHashTable is enabled, do not lock anything to do the initial table peek */
@@ -974,23 +998,23 @@ loadNonArrayClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDAT
 		/* Match RI behaviour by implicitly locking the classloader */
 		if (lockLoaderMonitor) {
 			/* Must lock the classloader before the classTableMutex, otherwise we deadlock */
-			Assert_VM_mustNotOwnMonitor(vmThread->javaVM->classTableMutex);
+			Assert_VM_mustNotOwnMonitor(vm->classTableMutex);
 			Trc_VM_loadNonArrayClass_enter_object_monitor(vmThread, classLoader, classNameLength, className);
 			objectMonitorEnter(vmThread, classLoader->classLoaderObject);
 			loaderMonitorLocked = TRUE;
 		}
-		omrthread_monitor_enter(vmThread->javaVM->classTableMutex);
+		omrthread_monitor_enter(vm->classTableMutex);
 	}
 
 	foundClass = hashClassTableAt(classLoader, className, classNameLength);
 	if (NULL != foundClass) {
 		if (!fastMode) {
-			omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+			omrthread_monitor_exit(vm->classTableMutex);
 		}
 	} else {
 		if (options & J9_FINDCLASS_FLAG_EXISTING_ONLY) {
 			if (!fastMode) {
-				omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+				omrthread_monitor_exit(vm->classTableMutex);
 			}
 		} else {
 			/* If -XX:+FastClassHashTable is enabled, do the locking now */
@@ -998,28 +1022,28 @@ loadNonArrayClass(J9VMThread* vmThread, J9Module *j9module, U_8* className, UDAT
 				/* Match RI behaviour by implicitly locking the classloader */
 				if (lockLoaderMonitor) {
 					/* Must lock the classloader before the classTableMutex, otherwise we deadlock */
-					Assert_VM_mustNotOwnMonitor(vmThread->javaVM->classTableMutex);
+					Assert_VM_mustNotOwnMonitor(vm->classTableMutex);
 					Trc_VM_loadNonArrayClass_enter_object_monitor(vmThread, classLoader, classNameLength, className);
 					objectMonitorEnter(vmThread, classLoader->classLoaderObject);
 					loaderMonitorLocked = TRUE;
 				}
-				omrthread_monitor_enter(vmThread->javaVM->classTableMutex);
+				omrthread_monitor_enter(vm->classTableMutex);
 
 				/* check again if somebody else already loaded the class */
 				foundClass = hashClassTableAt(classLoader, className, classNameLength);
 				if (NULL != foundClass) {
-					omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+					omrthread_monitor_exit(vm->classTableMutex);
 					goto done;
 				}
 			}
-			/* Do not do the primtive type optimization if -Xfuture is on */
-			if (0 == (vmThread->javaVM->runtimeFlags & J9_RUNTIME_XFUTURE)) {
-				if ((classNameLength <= 7) && ((classLoader == vmThread->javaVM->systemClassLoader) || (classLoader == vmThread->javaVM->applicationClassLoader))) {
+			/* Do not do the primitive type optimization if -Xfuture is on */
+			if (0 == (vm->runtimeFlags & J9_RUNTIME_XFUTURE)) {
+				if ((classNameLength <= 7) && ((classLoader == vm->systemClassLoader) || (classLoader == vm->applicationClassLoader))) {
 					switch(classNameLength) {
 						case 3:
 							if (memcmp(className, "int" , 3) == 0) {
 primitiveClass:
-								omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+								omrthread_monitor_exit(vm->classTableMutex);
 								if (loaderMonitorLocked) {
 									Trc_VM_loadNonArrayClass_exit_object_monitor(vmThread, classLoader, classNameLength, className);
 									objectMonitorExit(vmThread, classLoader->classLoaderObject);
@@ -1064,7 +1088,7 @@ primitiveClass:
 			}
 			/* class table mutex is locked */
 			/* go directly to the dynamic loader if the flag is set or we are the bootstrap loader and we do not have a Java object to send loadClass() to */
-			if (((classLoader == vmThread->javaVM->systemClassLoader) && (NULL == classLoader->classLoaderObject))
+			if (((classLoader == vm->systemClassLoader) && (NULL == classLoader->classLoaderObject))
 				|| (options & J9_FINDCLASS_FLAG_USE_LOADER_CP_ENTRIES)
 			) {
 #ifdef J9VM_OPT_DYNAMIC_LOAD_SUPPORT
@@ -1073,7 +1097,7 @@ primitiveClass:
 #endif
 			} else {
 				foundClass = arbitratedLoadClass(vmThread, className, classNameLength, classLoader, exception);
-				omrthread_monitor_exit(vmThread->javaVM->classTableMutex);
+				omrthread_monitor_exit(vm->classTableMutex);
 			}
 			/* class table mutex is now unlocked */
 		}
@@ -1505,83 +1529,3 @@ contendedLoadTableRemoveThread(J9VMThread* vmThread, J9ContendedLoadTableEntry *
 	}
 	return newCount;
 }
-
-
-
-#ifdef J9VM_OPT_SIDECAR
-
-void
-fixCPShapeDescription(J9Class * clazz, UDATA cpIndex)
-{
-	UDATA wordIndex = (UDATA) (cpIndex / (sizeof(U_32)*2));
-	UDATA shiftAmount = (UDATA) ((cpIndex % (sizeof(U_32)*2)) * 4);
-	U_32 * cpShapeDescription = J9ROMCLASS_CPSHAPEDESCRIPTION(clazz->romClass);
-
-	cpShapeDescription[wordIndex] = (cpShapeDescription[wordIndex] & ~(J9_CP_DESCRIPTION_MASK << shiftAmount)) | (J9CPTYPE_INSTANCE_METHOD << shiftAmount);
-}
-
-void
-fixUnsafeMethods(J9VMThread* currentThread, jclass clazz)
-{
-	J9Class *j9clazz = J9VM_J9CLASS_FROM_HEAPCLASS(currentThread, J9_JNI_UNWRAP_REFERENCE(clazz));
-	J9ROMClass *romClass = j9clazz->romClass;
-	J9ConstantPool *ramCP = J9_CP_FROM_CLASS(j9clazz);
-	J9ROMConstantPoolItem *romCP = ramCP->romConstantPool;
-	J9Method *currentMethod = j9clazz->ramMethods;
-	J9Method *endOfMethods = currentMethod + romClass->romMethodCount;
-	while (currentMethod != endOfMethods) {
-		J9ROMMethod *romMethod = J9_ROM_METHOD_FROM_RAM_METHOD(currentMethod);
-		U_8 *bytecodes = currentMethod->bytecodes;
-		UDATA pc = 0;
-		UDATA endPC = J9_BYTECODE_SIZE_FROM_ROM_METHOD(romMethod);
-		while (pc < endPC) {
-			U_8 bc = bytecodes[pc];
-			switch(bc) {
-			case JBlookupswitch:
-			case JBtableswitch: {
-				I_32 numEntries = 0;
-				I_32 low = 0;
-				pc = pc + (4 - (pc & 3));
-				pc += sizeof(U_32);
-				low = *((I_32*)(bytecodes + pc));
-				pc += sizeof(U_32);
-				if (bc == JBtableswitch) {
-					I_32 high = *((I_32*)(bytecodes + pc));
-					pc += sizeof(U_32);
-					numEntries = high - low + 1;
-				} else {
-					numEntries = low * 2;
-				}
-				pc += (numEntries * 4);
-				break;
-			}
-			case JBinvokevirtual: {
-				U_16 cpIndex = *(U_16*)(bytecodes + pc + 1);
-				J9ROMMethodRef *romMethodRef = (J9ROMMethodRef*)romCP + cpIndex;
-				J9Class *resolvedClass = resolveClassRef(currentThread, ramCP, romMethodRef->classRefCPIndex, J9_RESOLVE_FLAG_RUNTIME_RESOLVE);
-				if (NULL == resolvedClass) {
-					currentThread->currentException = NULL;
-					currentThread->privateFlags &= ~(UDATA)J9_PRIVATE_FLAGS_REPORT_EXCEPTION_THROW;
-				} else {
-					J9Method *method = (J9Method*)javaLookupMethod(currentThread, resolvedClass, J9ROMMETHODREF_NAMEANDSIGNATURE(romMethodRef), NULL, J9_LOOK_VIRTUAL | J9_LOOK_NO_THROW);
-					if (NULL != method) {
-						if (!J9ROMMETHOD_HAS_VTABLE(J9_ROM_METHOD_FROM_RAM_METHOD(method))) {
-							bytecodes[pc] = JBinvokespecial;
-							fixCPShapeDescription(j9clazz, cpIndex);
-							memset(ramCP + 1, 0, sizeof(J9RAMConstantPoolItem) * (romClass->ramConstantPoolCount - 1));
-							internalRunPreInitInstructions(j9clazz, currentThread);
-						}
-					}
-				}
-				/* Intentional fall through */
-			}
-			default:
-				pc += (J9JavaInstructionSizeAndBranchActionTable[bc] & 7);
-				break;
-			}
-		}
-		currentMethod += 1;
-	}
-}
-#endif
-

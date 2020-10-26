@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #if !defined(REMEMBEREDSETCARDLIST_HPP)
@@ -54,8 +54,10 @@ private:
 	/**
 	 * Remove an entry. This just NULLs the entry. Compaction/shifting is to be done later, explicitly.
 	 */
-	void removeCard(MM_RememberedSetCard *bucketCardList, UDATA index) {
-		bucketCardList[index] = 0;
+	void removeCard(MM_EnvironmentBase *env, MM_RememberedSetCard *bucketCardList, UDATA index) {
+		bool const compressed = env->compressObjectReferences();
+		MM_RememberedSetCard *cardAddress = MM_RememberedSetCard::addToCardAddress(bucketCardList, index, compressed);
+		MM_RememberedSetCard::writeCard(cardAddress, 0, compressed);
 	}
 	
 	MM_RememberedSetCardBucket *mapToBucket(MM_EnvironmentVLHGC *env) {
@@ -82,7 +84,7 @@ public:
 	 * Search the list and check if this card is remembered.
 	 * Caller assures the list is not overflowed. Not thread safe.
 	 */
-	bool isRemembered(MM_EnvironmentVLHGC *env, MM_RememberedSetCard card);
+	bool isRemembered(MM_EnvironmentVLHGC *env, UDATA card);
 
 	/**
 	 * Check if list is overflowed
@@ -162,7 +164,7 @@ public:
 	void releaseBuffers(MM_EnvironmentVLHGC *env);
 
 	/**
-	 * Release buffers only for the bucked assocated with current thread.
+	 * Release buffers only for the bucked associated with current thread.
 	 */
 	void releaseBuffersForCurrentThread(MM_EnvironmentVLHGC *env);
 

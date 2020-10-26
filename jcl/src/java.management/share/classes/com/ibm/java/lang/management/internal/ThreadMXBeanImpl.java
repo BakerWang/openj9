@@ -1,6 +1,6 @@
 /*[INCLUDE-IF Sidecar17]*/
 /*******************************************************************************
- * Copyright (c) 2007, 2016 IBM Corp. and others
+ * Copyright (c) 2007, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,15 +18,23 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.java.lang.management.internal;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
+import java.lang.reflect.Constructor;
+import java.security.AccessController;
+import java.security.PrivilegedAction;
+import java.util.Arrays;
 
 import javax.management.ObjectName;
+
+import openj9.management.internal.ThreadInfoBase;
 
 /**
  * Runtime type for {@link java.lang.management.ThreadMXBean}.
@@ -39,7 +47,9 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	private static Boolean isThreadCpuTimeEnabled = null;
 	private static Boolean isThreadCpuTimeSupported = null;
 
-	private final ObjectName objectName;
+	private static final MethodHandle threadInfoConstructorHandle = getThreadInfoConstructorHandle();
+
+	private ObjectName objectName;
 
 	/**
 	 * Protected constructor to limit instantiation.
@@ -47,12 +57,11 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 */
 	protected ThreadMXBeanImpl() {
 		super();
-		objectName = ManagementUtils.createObjectName(ManagementFactory.THREAD_MXBEAN_NAME);
 	}
 
 	/**
 	 * Singleton accessor method.
-	 * 
+	 *
 	 * @return the <code>ThreadMXBeanImpl</code> singleton.
 	 */
 	public static ThreadMXBean getInstance() {
@@ -255,7 +264,20 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 		}
 
 		// Create an array and populate with individual ThreadInfos
-		return this.getMultiThreadInfoImpl(ids, maxDepth, false, false);
+		ThreadInfoBase[] infoBases = this.getMultiThreadInfoImpl(ids, maxDepth, false, false);
+		return makeThreadInfos(infoBases);
+	}
+
+	/**
+	 * Create ThreadInfo objects containing ThreadInfoBase objects.
+	 * @param infoBases containers for the actual thread information
+	 * @return ThreadInfo array whose elements wrap the elements of infoBases
+	 */
+	private static ThreadInfo[] makeThreadInfos(ThreadInfoBase[] infoBases) {
+		PrivilegedAction<ThreadInfo[]> action = () -> Arrays.stream(infoBases)
+				.map(ThreadMXBeanImpl::makeThreadInfo)
+				.toArray(ThreadInfo[]::new);
+		return AccessController.doPrivileged(action);
 	}
 
 	/**
@@ -265,7 +287,7 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 * Assumes that caller has already carried out error checking on the
 	 * <code>id</code> and <code>maxDepth</code> arguments.
 	 * </p>
-	 * 
+	 *
 	 * @param ids
 	 *            thread ids
 	 * @param lockedMonitors
@@ -281,6 +303,23 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	@Override
 	public ThreadInfo[] getThreadInfo(long[] ids, boolean lockedMonitors,
 			boolean lockedSynchronizers) {
+		return getThreadInfoCommon(ids, lockedMonitors, lockedSynchronizers, Integer.MAX_VALUE);
+	}
+
+	/*[IF Java10]*/
+	@Override
+	public ThreadInfo[] getThreadInfo(long[] ids, boolean lockedMonitors,
+			boolean lockedSynchronizers, int maxDepth) {
+		/*[MSG "K0662", "maxDepth must not be negative."]*/
+		if (maxDepth < 0) {
+			throw new IllegalArgumentException(com.ibm.oti.util.Msg.getString("K0662")); //$NON-NLS-1$
+		}
+		return getThreadInfoCommon(ids, lockedMonitors, lockedSynchronizers, maxDepth);
+	}
+	/*[ENDIF]*/ // Java10
+
+	private ThreadInfo[] getThreadInfoCommon(long[] ids, boolean lockedMonitors,
+			boolean lockedSynchronizers, int maxDepth) {
 		// Verify inputs
 		if (lockedMonitors && !isObjectMonitorUsageSupported()) {
 			/*[MSG "K05FC", "Monitoring of object monitors is not supported on this virtual machine"]*/
@@ -305,8 +344,8 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 		}
 
 		// Create an array and populate with individual ThreadInfos
-		return this.getMultiThreadInfoImpl(ids, Integer.MAX_VALUE,
-				lockedMonitors, lockedSynchronizers);
+		return makeThreadInfos(getMultiThreadInfoImpl(ids, maxDepth,
+				lockedMonitors, lockedSynchronizers));
 	}
 
 	/**
@@ -328,24 +367,25 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 			/*[MSG "K05F8", "maxDepth value cannot be negative."]*/
 			throw new IllegalArgumentException(com.ibm.oti.util.Msg.getString("K05F8")); //$NON-NLS-1$
 		}
-		return this.getThreadInfoImpl(id, maxDepth);
+		PrivilegedAction<ThreadInfo> action = () -> makeThreadInfo(getThreadInfoImpl(id, maxDepth));
+		return AccessController.doPrivileged(action);
 	}
 
 	/**
-	 * Get together information for a thread and create an instance of the
-	 * ThreadInfo class.
+	 * Get the information for a thread and create an instance of the
+	 * ThreadInfoBase class.
 	 * <p>
 	 * Assumes that caller has already carried out error checking on the
 	 * <code>id</code> and <code>maxDepth</code> arguments.
 	 * </p>
-	 * 
+	 *
 	 * @param id
 	 *            thread id
 	 * @param maxStackDepth
 	 *            maximum depth of the stack trace
-	 * @return ThreadInfo of the give thread
+	 * @return ThreadInfoBase of the given thread
 	 */
-	private native ThreadInfo getThreadInfoImpl(long id, int maxStackDepth);
+	private native ThreadInfoBase getThreadInfoImpl(long id, int maxStackDepth);
 
 	/**
 	 * @param id
@@ -619,6 +659,11 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 */
 	@Override
 	public ThreadInfo[] dumpAllThreads(boolean lockedMonitors, boolean lockedSynchronizers) {
+		return dumpAllThreadsCommon(lockedMonitors, lockedSynchronizers, Integer.MAX_VALUE);
+	}
+
+	private ThreadInfo[] dumpAllThreadsCommon(boolean lockedMonitors,
+			boolean lockedSynchronizers, int maxDepth) {
 		if (lockedMonitors && !isObjectMonitorUsageSupported()) {
 			/*[MSG "K05FC", "Monitoring of object monitors is not supported on this virtual machine"]*/
 			throw new UnsupportedOperationException(com.ibm.oti.util.Msg.getString("K05FC")); //$NON-NLS-1$
@@ -631,8 +676,24 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 		if (security != null) {
 			security.checkPermission(ManagementPermissionHelper.MPMONITOR);
 		}
-		return dumpAllThreadsImpl(lockedMonitors, lockedSynchronizers);
+		ThreadInfoBase[] threadInfoBaseArray = dumpAllThreadsImpl(lockedMonitors, lockedSynchronizers, maxDepth);
+		return makeThreadInfos(threadInfoBaseArray);
 	}
+
+	/*[IF Java10]*/
+	/**
+	 * {@inheritDoc}
+	 */
+	@Override
+	public ThreadInfo[] dumpAllThreads(boolean lockedMonitors,
+			boolean lockedSynchronizers, int maxDepth) {
+		/*[MSG "K0662", "maxDepth must not be negative."]*/
+		if (maxDepth < 0) {
+			throw new IllegalArgumentException(com.ibm.oti.util.Msg.getString("K0662")); //$NON-NLS-1$
+		}
+		return dumpAllThreadsCommon(lockedMonitors, lockedSynchronizers, maxDepth);
+	}
+	/*[ENDIF]*/ // Java10
 
 	/**
 	 * @param lockedMonitors
@@ -641,18 +702,22 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 * @param lockedSynchronizers
 	 *            if <code>true</code> then include details of locked ownable
 	 *            synchronizers in returned array
-	 * @return an array of <code>ThreadInfo</code> objects&nbsp;-&nbsp;one for
+	 * @param maxDepth
+	 *            Limit the number of frames returned.  Negative values indicate no limit.
+	 * @return an array of <code>ThreadInfoBase</code> objects&nbsp;-&nbsp;one for
 	 *         each thread running in the virtual machine
+	 * @since 10
 	 */
-	private native ThreadInfo[] dumpAllThreadsImpl(boolean lockedMonitors,
-			boolean lockedSynchronizers);
+	private native ThreadInfoBase[] dumpAllThreadsImpl(boolean lockedMonitors,
+			boolean lockedSynchronizers, int maxDepth);
 
 	/**
-	 * Answers an array of instances of the ThreadInfo class according to ids
-	 * 
+	 * Answers an array of instances of the ThreadInfoBase
+	 * class according to ids.
+	 *
 	 * @param ids
 	 *            thread ids
-	 * @param maxStackDepth 
+	 * @param maxStackDepth
 	 *            the max stack depth
 	 * @param getLockedMonitors
 	 *            if <code>true</code> attempt to set the returned
@@ -662,9 +727,9 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 *            if <code>true</code> attempt to set the returned
 	 *            <code>ThreadInfo</code> with details of ownable
 	 *            synchronizers locked by the specified thread
-	 * @return new {@link ThreadInfo} instance
-	 */   
-	private native ThreadInfo[] getMultiThreadInfoImpl(long[] ids, int maxStackDepth,
+	 * @return array of ThreadInfoBase
+	 */
+	private native ThreadInfoBase[] getMultiThreadInfoImpl(long[] ids, int maxStackDepth,
 			boolean getLockedMonitors, boolean getLockedSynchronizers);
 
 	/**
@@ -713,7 +778,56 @@ public class ThreadMXBeanImpl implements ThreadMXBean {
 	 */
 	@Override
 	public ObjectName getObjectName() {
+		if (objectName == null) {
+			objectName = ManagementUtils.createObjectName(ManagementFactory.THREAD_MXBEAN_NAME);
+		}
 		return objectName;
+	}
+
+	private static MethodHandle getThreadInfoConstructorHandle() {
+		return AccessController.doPrivileged(new PrivilegedAction<MethodHandle>() {
+			@Override
+			public MethodHandle run() {
+				MethodHandle myHandle = null;
+				try {
+					Constructor<ThreadInfo> threadInfoConstructor = ThreadInfo.class
+							.getDeclaredConstructor(ThreadInfoBase.class);
+					threadInfoConstructor.setAccessible(true);
+					myHandle = MethodHandles.lookup().unreflectConstructor(threadInfoConstructor);
+				} catch (NoSuchMethodException | SecurityException | IllegalAccessException e) {
+					/*[MSG "K0617", "Unexpected exception accessing ThreadInfo constructor."]*/
+					throw new RuntimeException(com.ibm.oti.util.Msg.getString("K0617"), e); //$NON-NLS-1$
+				}
+				return myHandle;
+			}
+		});
+	}
+
+	/**
+	 * Wrap a ThreadInfoBase object in a ThreadInfo object.
+	 * @param base container for the ThreadInfo data
+	 * @return ThreadInfo object, or null if base is null
+	 * @note this must be wrapped in a doPrivileged().
+	 */
+	private static ThreadInfo makeThreadInfo(ThreadInfoBase base) {
+		ThreadInfo newThreadInfo = null;
+		if ((null != base) && (null != threadInfoConstructorHandle)) {
+			try {
+				newThreadInfo = (ThreadInfo) threadInfoConstructorHandle.invoke(base);
+			} catch (Throwable e) {
+				if (e instanceof RuntimeException) {
+					throw (RuntimeException) e;
+				}
+
+				if (e instanceof Error) {
+					throw (Error) e;
+				}
+
+				/*[MSG "K0618", "Unexpected exception invoking ThreadInfo constructor."]*/
+				throw new RuntimeException(com.ibm.oti.util.Msg.getString("K0618"), e); //$NON-NLS-1$
+			}
+		}
+		return newThreadInfo;
 	}
 
 }

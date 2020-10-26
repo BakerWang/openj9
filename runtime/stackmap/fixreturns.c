@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "stackmap_internal.h"
@@ -33,36 +33,6 @@
 #if 0 /* StackMapTable based fixreturns removed - CMVC 145180 - bogus stack maps cause shareclasses crash*/
 /* Return code only used locally */
 #define	MISSING_MAPS	1
-#endif
-
-#define PARAM_8(index, offset) ((index) [offset])
-
-#ifdef J9VM_ENV_LITTLE_ENDIAN
-#define PARAM_16(index, offset)	\
-	( ( ((U_16) (index)[offset])			)	\
-	| ( ((U_16) (index)[offset + 1]) << 8)	\
-	)
-#else
-#define PARAM_16(index, offset)	\
-	( ( ((U_16) (index)[offset]) << 8)	\
-	| ( ((U_16) (index)[offset + 1])			)	\
-	)
-#endif
-
-#ifdef J9VM_ENV_LITTLE_ENDIAN
-#define PARAM_32(index, offset)						\
-	( ( ((U_32) (index)[offset])					)	\
-	| ( ((U_32) (index)[offset + 1]) << 8 )	\
-	| ( ((U_32) (index)[offset + 2]) << 16)	\
-	| ( ((U_32) (index)[offset + 3]) << 24)	\
-	)
-#else
-#define PARAM_32(index, offset)						\
-	( ( ((U_32) (index)[offset])		 << 24)	\
-	| ( ((U_32) (index)[offset + 1]) << 16)	\
-	| ( ((U_32) (index)[offset + 2]) << 8 )	\
-	| ( ((U_32) (index)[offset + 3])			)	\
-	)
 #endif
 
 static IDATA fixReturnBytecodesInMethod (J9PortLibrary * portLib, J9ROMClass * romClass, J9ROMMethod * romMethod);
@@ -96,7 +66,7 @@ fixReturnBytecodes(J9PortLibrary * portLib, struct J9ROMClass* romClass)
 		if ((romMethod->modifiers & (CFR_ACC_NATIVE | CFR_ACC_ABSTRACT)) == 0) {
 			if (isJavaLangObject) {
 				/* Avoid rewriting genericReturn for Object.<init>() */
-				U_8 * nameData = J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod));
+				U_8 * nameData = J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod));
 				if (('<' == nameData[0]) && ('i' == nameData[1]) && (1 == romMethod->argCount)) {
 					continue;
 				}
@@ -123,8 +93,8 @@ getReturnBytecode(J9ROMClass * romClass, J9ROMMethod * romMethod, UDATA * return
 
 	U_8 sigChar, returnBytecode;
 
-	J9UTF8 * name = J9ROMMETHOD_GET_NAME(romClass, romMethod);
-	J9UTF8 * signature = J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod);
+	J9UTF8 * name = J9ROMMETHOD_NAME(romMethod);
+	J9UTF8 * signature = J9ROMMETHOD_SIGNATURE(romMethod);
 
 	U_8 * sigData = J9UTF8_DATA(signature);
 	UDATA sigLength = J9UTF8_LENGTH(signature);
@@ -134,24 +104,56 @@ getReturnBytecode(J9ROMClass * romClass, J9ROMMethod * romMethod, UDATA * return
 	*returnSlots = 0;
 	sigChar = sigData[sigLength - 1];
 
+	/* Update the sig char in the case we are dealing with an array */
+	if ('[' == sigData[sigLength - 2]) {
+		sigChar = '[';
+	}
+
 	if (sigChar != 'V') {
 		*returnSlots = 1;
 		if (sigChar == 'J' || sigChar == 'D') {
-			if (sigData[sigLength - 2] != '[') {
-				*returnSlots = 2;
-			}
+			*returnSlots = 2;
 		}
 	}
 
 	/* Determine the correct return bytecode to insert */
-
-	returnBytecode = JBreturn0 + (U_8) *returnSlots;
-
 	if ((J9UTF8_DATA(name)[0] == '<') && (J9UTF8_DATA(name)[1] == 'i')) {
 		returnBytecode = JBreturnFromConstructor;
-	} else if (romMethod->modifiers & J9AccSynchronized) {
-		returnBytecode = JBsyncReturn0 + (U_8) *returnSlots;
+	} else {
+		/* bool, byte, char, and short need special treatment since they need to be truncated before return */
+		if (romMethod->modifiers & J9AccSynchronized) {
+			switch(sigChar){
+			case 'Z':
+			case 'B':
+			case 'C':
+			case 'S':
+				returnBytecode = JBgenericReturn;
+				break;
+			default:
+				returnBytecode = JBsyncReturn0 + (U_8) *returnSlots;
+				break;
+			}
+		} else {
+			switch(sigChar){
+			case 'Z':
+				returnBytecode = JBreturnZ;
+				break;
+			case 'B':
+				returnBytecode = JBreturnB;
+				break;
+			case 'C':
+				returnBytecode = JBreturnC;
+				break;
+			case 'S':
+				returnBytecode = JBreturnS;
+				break;
+			default:
+				returnBytecode = JBreturn0 + (U_8) *returnSlots;
+				break;
+			}
+		}
 	}
+
 
 	return returnBytecode;
 }
@@ -404,25 +406,19 @@ fixReturns(UDATA *scratch, U_8 * map, J9ROMClass * romClass, J9ROMMethod * romMe
 			case JBinvokehandlegeneric:
 			case JBinvokevirtual:
 			case JBinvokespecial:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 			case JBinvokespecialsplit:
-#endif  /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			case JBinvokeinterface:
 				depth--;
 			case JBinvokedynamic:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 			case JBinvokestaticsplit:
-#endif  /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			case JBinvokestatic: {
 				index = PARAM_16(bcIndex, 1);
-				
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
+
 				if (JBinvokestaticsplit == bc) {
 					index = *(U_16 *)(J9ROMCLASS_STATICSPLITMETHODREFINDEXES(romClass) + index);
 				} else if (JBinvokespecialsplit == bc) {
 					index = *(U_16 *)(J9ROMCLASS_SPECIALSPLITMETHODREFINDEXES(romClass) + index);
 				}
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 				if (bc == JBinvokedynamic) {
 					/* TODO 3 byte index */
 					utf8Signature = (J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(SRP_PTR_GET(callSiteData + index, J9ROMNameAndSignature*)));
@@ -540,7 +536,7 @@ fixReturnsWithStackMaps(J9ROMClass * romClass, J9ROMMethod * romMethod, U_32 * s
 			if ((size & 0xE0) == 0) {
 				bcIndex += (size & 7);
 				if (size == 0) {
-					/* Must check for zero else it will infinitiely loop */
+					/* Must check for zero else it will infinitely loop */
 					/* Unknown bytecode - will fail verification later */
 					Trc_Map_fixReturnsWithStackMaps_UnknownBytecode(bc, (bcIndex - bcStart));
 					return BCT_ERR_NO_ERROR;
@@ -716,7 +712,7 @@ getNextStackIndex (U_8 * stackMapData, UDATA mapPC, UDATA stackMapCount)
 
 /* 
 	Calculate the stack depth from the current stack map.
-	Most occurences will be zero. 
+	Most occurrences will be zero. 
 */
 
 static UDATA

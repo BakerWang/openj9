@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <stdlib.h>
@@ -76,8 +76,8 @@ j9maxmap_setMapMemoryBuffer(J9JavaVM * vm, J9ROMClass * romClass)
 					maxSize = tempMaxSize;
 					Trc_Map_j9maxmap_setMapMemoryBuffer_Larger_Method(tempMaxSize, 
 							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(romClass)), J9UTF8_DATA(J9ROMCLASS_CLASSNAME(romClass)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)), J9UTF8_DATA(J9ROMMETHOD_GET_NAME(NULL,romMethod)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)), J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(NULL,romMethod)));
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)), J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)), J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)));
 #if 0
 					printf("[][][] maxStack = %d, maxBranchCount = %d, length = %d\n", maxStack, romClass->maxBranchCount, length);
 					printf("[][][] new unrounded maxSize = %d from stk = %d, lcl = %d, dbg = %d\n", tempMaxSize, stackmapSize + 8192, localmapSize + 8192, debuglocalmapSize + 8192);

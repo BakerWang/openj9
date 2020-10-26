@@ -1,7 +1,7 @@
-/*[INCLUDE-IF Sidecar19-SE-OpenJ9]*/
+/*[INCLUDE-IF Sidecar18-SE-OpenJ9 & !OPENJDK_METHODHANDLES]*/
 
 /*******************************************************************************
- * Copyright (c) 2017, 2017 IBM Corp. and others
+ * Copyright (c) 2017, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -19,12 +19,13 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 package java.lang.invoke;
 
 import java.lang.reflect.Method;
+import sun.invoke.util.Wrapper;
 
 /*
  * Stub class to compile OpenJDK j.l.i.MethodHandleImpl
@@ -41,6 +42,38 @@ class LambdaForm {
 	LambdaForm(String str, int num, Name[] names, boolean flag) {
 		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
+	/*[IF Java10]*/
+	LambdaForm(int a, Name[] b, int c) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, int c, Kind d) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, int c, boolean d, MethodHandle e) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, int c, boolean d, MethodHandle e, Kind f) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, Kind c) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, boolean c) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(int a, Name[] b, boolean c, Kind d) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(Name[] a, Name[] b, Name c) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	LambdaForm(Name[] a, Name[] b, Name c, boolean d) {
+		OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+	}
+	/*[ENDIF]*/
 	
 	static class NamedFunction {
 		NamedFunction(MethodHandle mh) {
@@ -55,19 +88,72 @@ class LambdaForm {
 		NamedFunction(Method m) {
 			OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 		}
+		/*[IF Java10]*/
+		NamedFunction(MethodHandle a, MethodHandleImpl.Intrinsic b){
+			OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		}
+		NamedFunction(MemberName a, MethodHandle b, MethodHandleImpl.Intrinsic c){
+			OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		}
+		/*[ENDIF]*/
 		
 		MethodHandle resolvedHandle() {
 			throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 		}
+
+		/*[IF Sidecar18-SE-OpenJ9&!Sidecar19-SE-OpenJ9]*/
+		MethodHandle resolve() {
+			throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+		}
+		/*[ENDIF]*/
 	}
 	
 	enum BasicType {
-		L_TYPE;
-		
+		L_TYPE,
+		I_TYPE,
+		J_TYPE,
+		F_TYPE,
+		D_TYPE,
+		V_TYPE;
+
 		static BasicType basicType(Class<?> cls) {
-			throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
+			/* Wrapper.forPrimitiveType throws an IllegalArgumentException for
+			 * non-primitive types (L_TYPE).
+			 */
+			Wrapper wrapper = Wrapper.forPrimitiveType(cls);
+			BasicType basicType = null;
+			if (wrapper != null) {
+				char basicTypeChar = wrapper.basicTypeChar();
+				if ((basicTypeChar == 'C') || (basicTypeChar == 'B') || (basicTypeChar == 'Z')
+					|| (basicTypeChar == 'I') || (basicTypeChar == 'S')
+				) {
+					basicType = I_TYPE;
+				} else if (basicTypeChar == 'J') {
+					basicType = J_TYPE;
+				} else if (basicTypeChar == 'F') {
+					basicType = F_TYPE;
+				} else if (basicTypeChar == 'D') {
+					basicType = D_TYPE;
+				} else if (basicTypeChar == 'V') {
+					basicType = V_TYPE;
+				} else {
+					throw new InternalError("Unknown basic type char: " + basicTypeChar);
+				}
+			}
+			return basicType;
 		}
 	}
+	/*[IF Java10]*/
+	enum Kind {
+		CONVERT,
+		SPREAD,
+		COLLECT,
+		GUARD,
+		GUARD_WITH_CATCH,
+		LOOP,
+		TRY_FINALLY
+	}
+	/*[ENDIF]*/
 	
 	@interface Hidden{
 	}

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2013, 2016 IBM Corp. and others
+ * Copyright (c) 2013, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "CudaCommon.hpp"
@@ -266,11 +266,7 @@ Java_com_ibm_cuda_Cuda_initialize
 	J9VMThread    * thread  = (J9VMThread *)env;
 	J9JavaVM      * javaVM  = thread->javaVM;
 
-#if defined(UT_DIRECT_TRACE_REGISTRATION)
 	UT_MODULE_LOADED(J9_UTINTERFACE_FROM_VM(javaVM));
-#else
-	UT_MODULE_LOADED(javaVM);
-#endif
 
 	Trc_cuda_initialize_entry(thread);
 
@@ -418,9 +414,5 @@ JNI_OnUnload(JavaVM * jvm, void *)
 		javaVM->cudaGlobals = NULL;
 	}
 
-#if defined(UT_DIRECT_TRACE_REGISTRATION)
 	UT_MODULE_UNLOADED(J9_UTINTERFACE_FROM_VM(javaVM));
-#else
-	UT_MODULE_UNLOADED(javaVM);
-#endif
 }

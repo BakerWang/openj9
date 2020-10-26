@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2015 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.tools.ddrinteractive.gccheck;
 
@@ -29,7 +29,6 @@ import java.util.Iterator;
 import com.ibm.j9ddr.CorruptDataException;
 import com.ibm.j9ddr.InvalidDataTypeException;
 import com.ibm.j9ddr.vm29.structure.J9Class;
-import com.ibm.j9ddr.vm29.structure.J9Consts;
 import com.ibm.j9ddr.vm29.structure.J9JavaClassFlags;
 import com.ibm.j9ddr.vm29.structure.J9Object;
 import com.ibm.j9ddr.vm29.j9.J9ObjectFieldOffset;
@@ -51,7 +50,6 @@ import com.ibm.j9ddr.vm29.pointer.AbstractPointer;
 import com.ibm.j9ddr.vm29.pointer.ObjectReferencePointer;
 import com.ibm.j9ddr.vm29.pointer.PointerPointer;
 import com.ibm.j9ddr.vm29.pointer.U8Pointer;
-import com.ibm.j9ddr.vm29.pointer.UDATAPointer;
 import com.ibm.j9ddr.vm29.pointer.VoidPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9BuildFlags;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ClassPointer;
@@ -75,14 +73,14 @@ import com.ibm.j9ddr.vm29.types.IDATA;
 import com.ibm.j9ddr.vm29.types.U32;
 import com.ibm.j9ddr.vm29.types.U64;
 import com.ibm.j9ddr.vm29.types.UDATA;
+import com.ibm.j9ddr.vm29.pointer.helper.J9IndexableObjectHelper;
 
 import static com.ibm.j9ddr.vm29.tools.ddrinteractive.gccheck.CheckBase.*;
-import static com.ibm.j9ddr.vm29.tools.ddrinteractive.gccheck.ScanFormatter.formatPointer;
 import static com.ibm.j9ddr.vm29.structure.J9MemorySegment.*;
 import static com.ibm.j9ddr.vm29.structure.J9Object.*;
 import static com.ibm.j9ddr.vm29.structure.J9ROMFieldOffsetWalkState.J9VM_FIELD_OFFSET_WALK_INCLUDE_STATIC;
 import static com.ibm.j9ddr.vm29.structure.J9ROMFieldOffsetWalkState.J9VM_FIELD_OFFSET_WALK_ONLY_OBJECT_SLOTS;
-import static com.ibm.j9ddr.vm29.structure.J9Consts.J9_JAVA_CLASS_DYING;
+import static com.ibm.j9ddr.vm29.structure.J9JavaAccessFlags.J9AccClassDying;
 
 class CheckEngine
 {
@@ -107,10 +105,17 @@ class CheckEngine
 
 	private GCHeapRegionManager _hrm;
 		
-	public CheckEngine(J9JavaVMPointer vm, CheckReporter reporter)
+	public CheckEngine(J9JavaVMPointer vm, CheckReporter reporter) throws CorruptDataException
 	{
 		_javaVM = vm;
 		_reporter = reporter;
+
+		/*
+		 * Even if hrm is null, all helpers that use it will null check it and
+		 * attempt to allocate it and handle the failure
+		 */
+		MM_HeapRegionManagerPointer hrmPtr = MM_GCExtensionsPointer.cast(_javaVM.gcExtensions()).heapRegionManager();
+		_hrm = GCHeapRegionManager.fromHeapRegionManager(hrmPtr);
 	}
 	
 	public J9JavaVMPointer getJavaVM()
@@ -320,7 +325,7 @@ class CheckEngine
 		
 		if(J9BuildFlags.gc_generational) {
 			if(scavengerEnabled) {
-				GCHeapRegionDescriptor objectRegion = findRegionForPointer(object, regionDesc);
+				GCHeapRegionDescriptor objectRegion = ObjectModel.findRegionForPointer(_javaVM, _hrm, object, regionDesc);
 				if(objectRegion == null) {
 					/* should be impossible, since checkObjectIndirect() already verified that the object exists */
 					return J9MODRON_GCCHK_RC_NOT_FOUND;
@@ -362,50 +367,6 @@ class CheckEngine
 		}
 		
 		return J9MODRON_SLOT_ITERATOR_OK;		
-	}
-
-	private GCHeapRegionDescriptor findRegionForPointer(AbstractPointer pointer, GCHeapRegionDescriptor region)
-	{
-		GCHeapRegionDescriptor regionDesc = null;
-		
-		if(region != null && region.isAddressInRegion(pointer)) {
-			return region;
-		}
-		
-		regionDesc = regionForAddress(pointer);
-		if(null != regionDesc) {
-			return regionDesc;
-		}
-		
-		// TODO kmt : this is tragically slow
-		try {
-			GCHeapRegionIterator iterator = GCHeapRegionIterator.from();
-			while(iterator.hasNext()) {
-				regionDesc = GCHeapRegionDescriptor.fromHeapRegionDescriptor(iterator.next());
-				if(isPointerInRegion(pointer, regionDesc)) {
-					return regionDesc;
-				}
-			}
-		} catch (CorruptDataException e) {}
-		return null;
-	}
-	
-	// TODO kmt : this doesn't belong here
-	private GCHeapRegionDescriptor regionForAddress(AbstractPointer pointer)
-	{
-		try {
-			if(null == _hrm) {
-				MM_HeapRegionManagerPointer hrm = MM_GCExtensionsPointer.cast(_javaVM.gcExtensions()).heapRegionManager();
-				_hrm = GCHeapRegionManager.fromHeapRegionManager(hrm);
-			}
-			return _hrm.regionDescriptorForAddress(pointer);
-		} catch (CorruptDataException cde) {}
-		return null;
-	}
-
-	private boolean isPointerInRegion(AbstractPointer pointer, GCHeapRegionDescriptor region)
-	{
-		return pointer.gte(region.getLowAddress()) && pointer.lt(region.getHighAddress());
 	}
 
 	private int checkObjectIndirect(J9ObjectPointer object)
@@ -451,7 +412,7 @@ class CheckEngine
 			return J9MODRON_GCCHK_RC_OK;
 		}
 		
-		regionDesc[0] = findRegionForPointer(object, regionDesc[0]);
+		regionDesc[0] = ObjectModel.findRegionForPointer(_javaVM, _hrm, object, regionDesc[0]);
 		if(regionDesc[0] == null) {
 			/* Is the object on the stack? */
 			GCVMThreadListIterator threadListIterator = GCVMThreadListIterator.from();
@@ -462,7 +423,7 @@ class CheckEngine
 				}
 			}
 			
-			UDATA classSlot = UDATA.cast(object.clazz());
+			UDATA classSlot = J9ObjectHelper.rawClazz(object);
 			if (classSlot.eq(J9MODRON_GCCHK_J9CLASS_EYECATCHER)) {
 				return J9MODRON_GCCHK_RC_OBJECT_SLOT_POINTS_TO_J9CLASS;
 			}
@@ -497,7 +458,7 @@ class CheckEngine
 					// Replace the object and resume
 					object = newObject[0];
 
-					regionDesc[0] = findRegionForPointer(object, regionDesc[0]);
+					regionDesc[0] = ObjectModel.findRegionForPointer(_javaVM, _hrm, object, regionDesc[0]);
 					if(regionDesc[0] == null) {
 						/* Is the object on the stack? */
 						GCVMThreadListIterator threadListIterator = GCVMThreadListIterator.from();
@@ -535,7 +496,7 @@ class CheckEngine
 				// Replace the object and resume
 				object = newObject[0];
 
-				regionDesc[0] = findRegionForPointer(object, regionDesc[0]);
+				regionDesc[0] = ObjectModel.findRegionForPointer(_javaVM, _hrm, object, regionDesc[0]);
 				if(regionDesc[0] == null) {
 					return J9MODRON_GCCHK_RC_NOT_FOUND;
 				}
@@ -724,7 +685,7 @@ class CheckEngine
 			
 			/* Additional checks for the remembered set */
 			if(object.notNull()) {
-				GCHeapRegionDescriptor objectRegion = findRegionForPointer(object, null);
+				GCHeapRegionDescriptor objectRegion = ObjectModel.findRegionForPointer(_javaVM, _hrm, object, null);
 				
 				if (objectRegion == null) {
 					/* shouldn't happen, since checkObjectIndirect() already verified this object */
@@ -992,7 +953,7 @@ class CheckEngine
 					//		if ((NULL == classToCast) || (0 == instanceOfOrCheckCast(J9GC_J9OBJECT_CLAZZ(*address), classToCast))) {
 					// The issue is that we can't simply call "internalFindClassUTF8" in DDR.
 					// We could guess at the behaviour of the ClassLoader, but that makes 
-					// distingushing a real problem from a weird ClassLoader delegation
+					// distinguishing a real problem from a weird ClassLoader delegation
 					// model difficult.
 				}
 	
@@ -1022,7 +983,7 @@ class CheckEngine
 			return J9MODRON_GCCHK_RC_CLASS_POINTER_UNALIGNED;
 		}
 		
-		/* Check that the class header containes the expected values */
+		/* Check that the class header contains the expected values */
 		int ret = checkJ9ClassHeader(clazz);
 		if (J9MODRON_GCCHK_RC_OK != ret) {
 			return ret;
@@ -1119,7 +1080,7 @@ class CheckEngine
 	
 	private int checkJ9ClassIsNotUnloaded(J9ClassPointer clazz) throws CorruptDataException
 	{
-		if(!clazz.classDepthAndFlags().bitAnd(J9_JAVA_CLASS_DYING).eq(0)) {
+		if(!clazz.classDepthAndFlags().bitAnd(J9AccClassDying).eq(0)) {
 			return J9MODRON_GCCHK_RC_CLASS_IS_UNLOADED;
 		}
 		return J9MODRON_GCCHK_RC_OK;
@@ -1234,23 +1195,19 @@ class CheckEngine
 			long delta = regionEnd.sub(UDATA.cast(object)).longValue();
 			
 			/* Basic check that there is enough room for the object header */
-			if (delta < J9Object.SIZEOF) {
+			if (delta < J9ObjectHelper.headerSize()) {
 				return J9MODRON_GCCHK_RC_INVALID_RANGE;
 			}
 
 			/* TODO: find out what the indexable header size should really be */
-			if (ObjectModel.isIndexable(object) && (delta < J9IndexableObjectContiguous.SIZEOF)) {
+			if (ObjectModel.isIndexable(object) && (delta < J9IndexableObjectHelper.contiguousHeaderSize())) {
 				return J9MODRON_GCCHK_RC_INVALID_RANGE;
 			}
 
 			if (delta < ObjectModel.getSizeInBytesWithHeader(object).longValue()) {
 				return J9MODRON_GCCHK_RC_INVALID_RANGE;
 			}
-			
-			if(J9BuildFlags.gc_arraylets && !J9BuildFlags.gc_hybridArraylets) {
-				// TODO kmt : more code here
-			}
-			
+
 			if((checkFlags & J9MODRON_GCCHK_VERIFY_FLAGS) != 0) {
 				// TODO : fix this test
 				if (!checkIndexableFlag(object)) {

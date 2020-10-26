@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "j9cfg.h"
@@ -91,7 +90,7 @@ MM_RegionValidator::validate(MM_EnvironmentBase *env)
 			/* something is here */
 			J9Object *firstObject = (J9Object *)lowAddress;
 			if (!MM_GCExtensions::getExtensions(env)->objectModel.isDeadObject(firstObject)) {
-				J9Class *clazz = J9GC_J9OBJECT_CLAZZ(firstObject);
+				J9Class *clazz = J9GC_J9OBJECT_CLAZZ(firstObject, env);
 				if (NULL == clazz) {
 					reportRegion(env, "NULL class in first object");
 					result = false;
@@ -106,7 +105,7 @@ MM_RegionValidator::validate(MM_EnvironmentBase *env)
 		MM_HeapMapWordIterator firstWordIterator(MM_GCExtensions::getExtensions(env)->previousMarkMap, _region->getLowAddress());
 		J9Object *firstObject = firstWordIterator.nextObject();
 		if (NULL != firstObject) {
-			J9Class *clazz = J9GC_J9OBJECT_CLAZZ(firstObject);
+			J9Class *clazz = J9GC_J9OBJECT_CLAZZ(firstObject, env);
 			if (NULL == clazz) {
 				reportRegion(env, "NULL class in first marked object");
 				result = false;
@@ -120,7 +119,7 @@ MM_RegionValidator::validate(MM_EnvironmentBase *env)
 		if (NULL == _region->_allocateData.getSpine()) {
 			reportRegion(env, "NULL spine object");
 			result = false;
-		} else if (EYECATCHER != J9GC_J9OBJECT_CLAZZ(_region->_allocateData.getSpine())->eyecatcher) {
+		} else if (EYECATCHER != J9GC_J9OBJECT_CLAZZ(_region->_allocateData.getSpine(), env)->eyecatcher) {
 			reportRegion(env, "Invalid spine object");
 			result = false;
 		}

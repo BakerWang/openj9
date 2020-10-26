@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -28,6 +28,7 @@
 #if !defined(OBJECTSCANNERSTATE_HPP_)
 #define OBJECTSCANNERSTATE_HPP_
 
+#include "FlattenedArrayObjectScanner.hpp"
 #include "MixedObjectScanner.hpp"
 #include "PointerArrayObjectScanner.hpp"
 #include "ReferenceObjectScanner.hpp"
@@ -42,6 +43,7 @@ typedef union GC_ObjectScannerState
 	uint8_t mixed[sizeof(GC_MixedObjectScanner)];
 	uint8_t reference[sizeof(GC_ReferenceObjectScanner)];
 	uint8_t pointerArray[sizeof(GC_PointerArrayObjectScanner)];
+	uint8_t flattenedArray[sizeof(GC_FlattenedArrayObjectScanner)];
 } GC_ObjectScannerState;
 
 #endif /* OBJECTSCANNERSTATE_HPP_ */

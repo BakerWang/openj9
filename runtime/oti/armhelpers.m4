@@ -1,4 +1,4 @@
-dnl Copyright (c) 1991, 2017 IBM Corp. and others
+dnl Copyright (c) 1991, 2019 IBM Corp. and others
 dnl
 dnl This program and the accompanying materials are made available under
 dnl the terms of the Eclipse Public License 2.0 which accompanies this
@@ -16,11 +16,11 @@ dnl
 dnl [1] https://www.gnu.org/software/classpath/license.html
 dnl [2] http://openjdk.java.net/legal/assembly-exception.html
 dnl
-dnl SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+dnl SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
 
 include(jilvalues.m4)
 
-define({CINTERP_STACK_SIZE},{J9CONST(J9TR_cframe_sizeof,$1,$2)})
+J9CONST({CINTERP_STACK_SIZE},J9TR_cframe_sizeof)
 ifelse(eval(CINTERP_STACK_SIZE % 8),0,,{ERROR stack size CINTERP_STACK_SIZE is not 8-aligned})
 
 ifdef({ASM_J9VM_ENV_DATA64},{

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -168,7 +168,7 @@ SH_ByteDataManagerImpl::storeNew(J9VMThread* currentThread, const ShcItem* itemI
 
 	if (itemInCache->dataType == TYPE_BYTE_DATA) {
 		ByteDataWrapper *bdw = (ByteDataWrapper*)ITEMDATA(itemInCache);
-		const J9UTF8* key = (const J9UTF8*)BDWTOKEN(bdw);
+		const J9UTF8* key = (const J9UTF8*)_cache->getAddressFromJ9ShrOffset(&(bdw->tokenOffset));
 		UDATA type = BDWTYPE(bdw);
 
 		if (type <= J9SHR_DATA_TYPE_MAX) {
@@ -218,6 +218,8 @@ SH_ByteDataManagerImpl::findSingleEntry(J9VMThread* currentThread, const char* k
 	Trc_SHR_BDMI_findSingleEntry_Entry(currentThread, keylen, key, dataType, jvmID);
 
 	if ((found = (BdLinkedListImpl*)hllTableLookup(currentThread, key, (U_16)keylen, true))) {
+		/* set found to found->_next, so that we see the last added item first, which means we will always find the item in the higher layer cache first */
+		found = (BdLinkedListImpl*)found->_next;
 		walk = found;
 		do {
 			const ShcItem* item = walk->_item;
@@ -262,7 +264,8 @@ SH_ByteDataManagerImpl::markAllStaleForKey(J9VMThread* currentThread, const char
 
 	if ((found = (BdLinkedListImpl*)hllTableLookup(currentThread, key, (U_16)keylen, true))) {
 		U_16 jvmID = _cache->getCompositeCacheAPI()->getJVMID();
-		
+		/* set found to found->_next, so that we see the last added item first, which means we will always find the item in the higher layer cache first */
+		found = (BdLinkedListImpl*)found->_next;
 		walk = found;
 		do {
 			const ShcItem* item = walk->_item;
@@ -283,7 +286,7 @@ SH_ByteDataManagerImpl::setDescriptorFields(const ByteDataWrapper* wrapper, J9Sh
 {
 	Trc_SHR_BDMI_setDescriptorFields_Event(wrapper, descriptor);
 
-	descriptor->address = (U_8*)BDWDATA(wrapper);
+	descriptor->address = (U_8*)_cache->getDataFromByteDataWrapper(wrapper);
 	descriptor->length = wrapper->dataLength;
 	descriptor->type = (UDATA)wrapper->dataType;
 	descriptor->flags = 0;
@@ -326,6 +329,8 @@ SH_ByteDataManagerImpl::find(J9VMThread* currentThread, const char* key, UDATA k
 	Trc_SHR_BDMI_find_Entry(currentThread, keylen, key, limitDataType, includePrivateData, firstItem, descriptorPool);
 
 	if ((found = (BdLinkedListImpl*)hllTableLookup(currentThread, key, (U_16)keylen, true))) {
+		/* set found to found->_next, so that we see the last added item first, which means we will always find the item in the higher layer cache first */
+		found = (BdLinkedListImpl*)found->_next;
 		walk = found;
 		do {
 			const ShcItem* item = walk->_item;
@@ -484,63 +489,3 @@ SH_ByteDataManagerImpl::getUnindexedDataBytes()
 {
 	return _unindexedBytes;
 }
-
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-
-/**
- * Walk the managed items hashtable in this cachelet. Allocate and populate an array
- * of hints, one for each hash entry.
- *
- * @param[in] self a data type manager
- * @param[in] vmthread the current VMThread
- * @param[out] hints a CacheletHints structure. This function fills in its
- * contents.
- *
- * @retval 0 success
- * @retval -1 failure
- */
-IDATA
-SH_ByteDataManagerImpl::createHintsForCachelet(J9VMThread* vmthread, SH_CompositeCache* cachelet, CacheletHints* hints)
-{
-	Trc_SHR_Assert_True(hints != NULL);
-
-	/* hints->dataType should have been set by the caller */
-	Trc_SHR_Assert_True(hints->dataType == _dataTypesRepresented[0]);
-	
-	return hllCollectHashes(vmthread, cachelet, hints);
-}
-
-/**
- * add a (_hashValue, cachelet) entry to the hash table
- * only called with hints of the right data type 
- *
- * each hint is a UDATA-length hash of a string
- */
-IDATA
-SH_ByteDataManagerImpl::primeHashtables(J9VMThread* vmthread, SH_CompositeCache* cachelet, U_8* hintsData, UDATA dataLength)
-{
-	UDATA* hashSlot = (UDATA*)hintsData;
-	UDATA hintCount = 0;
-
-	if ((dataLength == 0) || (hintsData == NULL)) {
-		return 0;
-	}
-
-	hintCount = dataLength / sizeof(UDATA);
-	while (hintCount-- > 0) {
-		Trc_SHR_BDMI_primeHashtables_addingHint(vmthread, cachelet, *hashSlot);
-		if (!_hints.addHint(vmthread, *hashSlot, cachelet)) {
-			/* If we failed to finish priming the hints, just give up.
-			 * Stuff should still work, just suboptimally.
-			 */
-			Trc_SHR_BDMI_primeHashtables_failedToPrimeHint(vmthread, this, cachelet, *hashSlot);
-			break;
-		}
-		++hashSlot;
-	}
-	
-	return 0;
-}
-
-#endif /* J9SHR_CACHELET_SUPPORT */

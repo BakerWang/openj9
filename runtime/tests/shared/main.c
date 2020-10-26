@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #if defined WIN32
@@ -51,7 +50,7 @@
 
 static IDATA setupArguments(struct j9cmdlineOptions* startupOptions,JavaVMInitArgs* vm_args,void **vmOptionsTable, BOOLEAN useXshareclasses, BOOLEAN enablebci);
 IDATA testOSCache(J9JavaVM* vm, struct j9cmdlineOptions *arg, const char *cmdline);
-IDATA testOSCacheMisc(J9PortLibrary *portLibrary, struct j9cmdlineOptions *arg, const char *cmdline);
+IDATA testOSCacheMisc(J9JavaVM *vm, struct j9cmdlineOptions *arg, const char *cmdline);
 IDATA testClasspathCache(J9JavaVM* vm);
 IDATA testCompositeCache(J9JavaVM* vm);
 IDATA testClasspathItem(J9JavaVM* vm);
@@ -70,6 +69,7 @@ IDATA testProtectNewROMClassData(J9JavaVM* vm);
 IDATA testCacheDirPerm(J9JavaVM *vm);
 IDATA testCacheFull(J9JavaVM *vm);
 IDATA testProtectSharedCacheData(J9JavaVM *vm);
+IDATA testStartupHints(J9JavaVM *vm);
 
 UDATA
 buildChildCmdlineOption(int argc, char **argv, const char *options, char * newargv[SHRTEST_MAX_CMD_OPTS]) {
@@ -148,7 +148,7 @@ createJavaVM(struct j9cmdlineOptions* startupOptions, J9JavaVM** vm_, BOOLEAN us
 	strcat(libjvmPath, jvmLibName);
 
 	if (j9sl_open_shared_library(libjvmPath, &handle, J9PORT_SLOPEN_DECORATE)) {
-		j9tty_printf(PORTLIB, "Failed to open JVM DLL: %s (%s)\n", J9_VM_DLL_NAME,
+		j9tty_printf(PORTLIB, "Failed to open JVM DLL: %s (%s)\n", libjvmPath,
 				j9error_last_error_message());
 		rc = 1;
 		goto cleanup;
@@ -191,11 +191,9 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 	I_32 i;
 	J9JavaVM* vm;
 	JNIEnv* env = NULL;
-#if !defined(J9SHR_CACHELET_SUPPORT)
 	J9ProcessHandle pid = NULL;
 	char * childargv[SHRTEST_MAX_CMD_OPTS];
 	UDATA childargc = 0;
-#endif
 
 	PORT_ACCESS_FROM_PORT(args->portLibrary);
 
@@ -207,7 +205,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 	main_setNLSCatalog(PORTLIB, argv);
 
 	for(i=0;i<argc;i++){
-#if !defined(J9SHR_CACHELET_SUPPORT)
 		if (startsWith(argv[i],TRANSACTIONTEST_CMDLINE_STARTSWITH)!=0) {
 			IDATA procrc = 0;
 			if (createJavaVM(args, &vm, TRUE, FALSE, &env) != JNI_OK) {
@@ -245,7 +242,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 			}
 			return procrc;
 		}
-#endif
 
 		if(startsWith(argv[i],OSCACHETEST_CMDLINE_STARTSWITH)!=0) {
 			IDATA procrc = 1;
@@ -264,7 +260,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 		}
 	}
 
-#if !defined(J9SHR_CACHELET_SUPPORT)
 	childargc = buildChildCmdlineOption(argc, argv, TRANSACTIONTEST_CMDLINE_STARTSWITH, childargv);
 	pid = LaunchChildProcess (PORTLIB, "testSCStoreTransaction", childargv, childargc);
 	if (pid == NULL) {
@@ -280,7 +275,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 		return 1;
 	}
 	rc |= WaitForTestProcess(PORTLIB, pid);
-#endif
 
 	if (createJavaVM(args, &vm, FALSE, FALSE, &env) != JNI_OK) {
 		j9tty_printf(PORTLIB,"\nCound not create jvm. Exiting unit test...\n");
@@ -310,7 +304,7 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 	HEADING(PORTLIB, "Compiled Method Test");
 	rc |= testCompiledMethod(vm);
 
-	/* TODO: Temporarily disable due to problems with Manager statics and muliple CacheMaps */
+	/* TODO: Temporarily disable due to problems with Manager statics and multiple CacheMaps */
 #if defined(REMOVED_FOR_NOW)
 	HEADING(PORTLIB, "Byte Data Test");
 	rc |= testByteDataManager(vm);
@@ -325,8 +319,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 	HEADING(PORTLIB, "CorruptCache Test");
 	rc |= testCorruptCache(vm);
 
-	/* TODO: Temporarily disable AttachedDataTest and minmax tests on realtime */
-#if !defined(J9SHR_CACHELET_SUPPORT)
 	HEADING(PORTLIB, "AttachedData Test");
 	rc |= testAttachedData(vm);
 
@@ -341,7 +333,6 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 
     HEADING(PORTLIB, "Cache Full Test");
     rc |= testCacheFull(vm);
-#endif
 
 	HEADING(PORTLIB, "Protect New ROM Class Data Test");
 	rc |= testProtectNewROMClassData(vm);
@@ -355,7 +346,10 @@ signalProtectedMain(struct J9PortLibrary *portLibrary, void * vargs)
 #endif
 
 	HEADING(PORTLIB, "OSCacheMisc Test");
-	rc |= testOSCacheMisc(PORTLIB, args, argv[i]);
+	rc |= testOSCacheMisc(vm, args, argv[i]);
+
+	HEADING(PORTLIB, "Startup Hints Test");
+	rc |= testStartupHints(vm);
 
 	if ( (*((JavaVM*)vm))->DestroyJavaVM((JavaVM*)vm) != JNI_OK ) {
 		args->shutdownPortLib = FALSE;
@@ -407,6 +401,13 @@ setupArguments(struct j9cmdlineOptions* startupOptions,JavaVMInitArgs* vm_args,v
 			if (vmOptionsTableAddOption(vmOptionsTable, "-Xshareclasses:nonpersistent,name=testSCTransactions,enablebci,reset", NULL) != J9CMDLINE_OK) {
 				goto cleanup;
 			}
+		}
+		/* The test needs a debug area size of 2MB (using -Xscdmx2m). The default cache size is 300MB on 64-bit platforms on Java 9 and up, which might not be allowed
+		 * by the OS due to the shmmax setting. The cache size will be adjusted to shmmax and debug area size will also be adjusted proportionally, resulting in the debug area
+		 * size to be much smaller than 2MB. Set cache size to 16MB for this test so that it won't be unstable due to the shmmax setting on the test machines.
+		 */
+		if (vmOptionsTableAddOption(vmOptionsTable, "-Xscmx16m", NULL) != J9CMDLINE_OK) {
+			goto cleanup;
 		}
 		if (vmOptionsTableAddOption(vmOptionsTable, "-Xscdmx2m", NULL) != J9CMDLINE_OK) {
 			goto cleanup;

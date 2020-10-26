@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,13 +17,11 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9.gc;
 
 import static com.ibm.j9ddr.vm29.events.EventManager.raiseCorruptDataEvent;
-
-import java.util.Set;
 
 import com.ibm.j9ddr.CorruptDataException;
 import com.ibm.j9ddr.vm29.j9.DataType;
@@ -37,7 +35,9 @@ import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.helper.J9ObjectHelper;
 import com.ibm.j9ddr.vm29.pointer.helper.J9RASHelper;
 import com.ibm.j9ddr.vm29.types.I32;
+import com.ibm.j9ddr.vm29.types.U32;
 import com.ibm.j9ddr.vm29.types.UDATA;
+import java.lang.reflect.InvocationTargetException;
 
 class MMObjectAccessBarrier_V1 extends MMObjectAccessBarrier
 {
@@ -48,12 +48,31 @@ class MMObjectAccessBarrier_V1 extends MMObjectAccessBarrier
 	{
 		shift = 0;
 		
-		if(J9BuildFlags.gc_compressedPointers) {
+		if(J9ObjectHelper.compressObjectReferences) {
 			try {
 				J9JavaVMPointer vm = J9RASHelper.getVM(DataType.getJ9RASPointer());
-				shift = vm.compressedPointersShift().intValue();
+
+				/* use reflection to access compressedPointersShift which will not exist if build is default */
+				UDATA shiftUdata = (UDATA)J9JavaVMPointer.class.getMethod("compressedPointersShift").invoke(vm); //$NON-NLS-1$
+				shift = shiftUdata.intValue();
 			} catch (CorruptDataException cde) {
 				raiseCorruptDataEvent("Error initializing the object access barrier", cde, true);
+			} catch (IllegalAccessException re) {
+				/* error caused by reflection */
+				CorruptDataException rcde = new CorruptDataException(re.toString(), re);
+				raiseCorruptDataEvent("Error retrieving compressedPointersShift", rcde, true);
+			} catch (InvocationTargetException re) {
+				/* error caused by reflection */
+				CorruptDataException rcde = new CorruptDataException(re.toString(), re);
+				raiseCorruptDataEvent("Error retrieving compressedPointersShift", rcde, true);
+			} catch (NoSuchMethodException re) {
+				/* error caused by reflection */
+				CorruptDataException rcde = new CorruptDataException(re.toString(), re);
+				raiseCorruptDataEvent("Error retrieving compressedPointersShift", rcde, true);
+			} catch (SecurityException re) {
+				/* error caused by reflection */
+				CorruptDataException rcde = new CorruptDataException(re.toString(), re);
+				raiseCorruptDataEvent("Error retrieving compressedPointersShift", rcde, true);
 			}
 		}
 	}
@@ -132,11 +151,11 @@ class MMObjectAccessBarrier_V1 extends MMObjectAccessBarrier
 	@Override
 	public J9ObjectPointer convertPointerFromToken(long token)
 	{
-		if(token == 0) {
+		if (token == 0) {
 			return J9ObjectPointer.NULL;
 		}
-		if(J9BuildFlags.gc_compressedPointers) {
-			UDATA ref = new UDATA(token);
+		if (J9ObjectHelper.compressObjectReferences) {
+			UDATA ref = new UDATA(token & U32.MASK);
 			ref = ref.leftShift(shift);
 			return J9ObjectPointer.cast(ref);
 		} else {
@@ -154,7 +173,7 @@ class MMObjectAccessBarrier_V1 extends MMObjectAccessBarrier
 			return 0L;
 		}
 		UDATA address = UDATA.cast(pointer);
-		if(J9BuildFlags.gc_compressedPointers) {
+		if(J9ObjectHelper.compressObjectReferences) {
 			address = address.rightShift(shift);
 		}
 		return address.longValue();

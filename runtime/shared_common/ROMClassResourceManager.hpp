@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 #if !defined(ROMCLASS_RESOURCE_MANAGER_HPP_INCLUDED)
 #define ROMCLASS_RESOURCE_MANAGER_HPP_INCLUDED
@@ -73,12 +73,6 @@ public:
 	virtual bool permitAccessToResource(J9VMThread* currentThread);
 	
 	virtual UDATA getDataBytes();
-	
-#if defined(J9SHR_CACHELET_SUPPORT)
-	virtual void fixupHintsForSerialization(J9VMThread* vmthread,
-			UDATA dataType, UDATA dataLen, U_8* data,
-			IDATA deployedOffset, void* serializedROMClassStartAddress);
-#endif
 
 	void runExitCode(void) {};
 
@@ -114,7 +108,7 @@ class SH_ResourceDescriptor
 		virtual UDATA resourceLengthFromWrapper(const void* wrapper) = 0;
 		
 		/* Given a resource and a cache ShcItem address, populate the ShcItem and write the resource into the cache */
-		virtual void writeDataToCache(const ShcItem* newCacheItem, const void* resourceAddress) = 0;
+		virtual void writeDataToCache(const ShcItem* newCacheItem, const J9ShrOffset* resourceOffset) = 0;
 
 		/* Update the given cache item at the specified offset with the value in data */
 		virtual void updateDataInCache(const ShcItem *cacheItem, I_32 updateAtOffset, const J9SharedDataDescriptor* data) {};
@@ -157,12 +151,6 @@ protected:
 	virtual UDATA getKeyForItem(const ShcItem* cacheItem) = 0;
 	
 	static void getKeyAndItemForHashtableEntry(void* entry, UDATA* keyPtr, const ShcItem** itemPtr);
-	
-#if defined(J9SHR_CACHELET_SUPPORT)
-	virtual bool canCreateHints();
-	virtual IDATA createHintsForCachelet(J9VMThread* vmthread, SH_CompositeCache* cachelet, CacheletHints* hints);
-	virtual IDATA primeHashtables(J9VMThread* vmthread, SH_CompositeCache* cachelet, U_8* hintsData, UDATA datalength);
-#endif
 
 	const char* _rrmHashTableName;
 	const char* _rrmLookupFnName;
@@ -181,9 +169,6 @@ private:
 	class HashTableEntry;
 
 	HashTableEntry* rrmTableAdd(J9VMThread* currentThread, const ShcItem* item, SH_CompositeCache* cachelet);
-#if defined(J9SHR_CACHELET_SUPPORT)
-	HashTableEntry* rrmTableAddPrime(J9VMThread* currentThread, UDATA key, SH_CompositeCache* cachelet);
-#endif
 	HashTableEntry* rrmTableAddHelper(J9VMThread* currentThread, HashTableEntry* newEntry, SH_CompositeCache* cachelet);
 	HashTableEntry* rrmTableLookup(J9VMThread* currentThread, UDATA key);
 	UDATA rrmTableRemove(J9VMThread* currentThread, UDATA key);
@@ -191,12 +176,6 @@ private:
 	static UDATA rrmHashEqualFn(void* left, void* right, void* userData);
 
 	static UDATA customCountItemsInList(void* entry, void* opaque);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	static UDATA rrmCountCacheletHashes(void* entry, void* userData);
-	static UDATA rrmCollectHashOfEntry(void* entry, void* userData);
-	IDATA rrmCollectHashes(J9VMThread* currentThread, SH_CompositeCache* cachelet, CacheletHints* hints);
-#endif
 
 /* Nested class representing an entry in the cache */
 
@@ -211,9 +190,6 @@ class HashTableEntry
 		/* Methods for getting properties of the object */
 		UDATA key() const {return _key;}
 		const ShcItem* item() const {return _item;}
-#if defined(J9SHR_CACHELET_SUPPORT)
-		SH_CompositeCache* cachelet() const {return _cachelet;}
-#endif
 		void setItem(const ShcItem* item) { _item = item; }
 
 	private:
@@ -223,9 +199,6 @@ class HashTableEntry
 		/* Declared data */
 		UDATA _key;
 		const ShcItem* _item;
-#if defined(J9SHR_CACHELET_SUPPORT)
-		SH_CompositeCache* _cachelet;
-#endif
 	};
 };
 

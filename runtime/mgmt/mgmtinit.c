@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016, 2016 IBM Corp. and others
+ * Copyright (c) 2016, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,14 +17,19 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
+#if defined(WIN32)
+#include <windows.h>
+#endif /* defined(WIN32) */
+
 #include "jni.h"
+#include "j9port.h"
+#include "jclprots.h"
 
 /*
  * Invoked immediately after this shared library has been loaded.
- * The shared library is currenly only a stub: simply return.
  */
 jint JNICALL
 JNI_OnLoad(JavaVM *vm, void *reserved)

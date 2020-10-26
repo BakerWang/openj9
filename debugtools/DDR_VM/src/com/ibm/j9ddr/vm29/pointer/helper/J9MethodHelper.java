@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.pointer.helper;
 
@@ -48,24 +48,24 @@ public class J9MethodHelper {
 	{
 		J9ClassPointer className;
 		J9ConstantPoolPointer constantPool;
-	
-		if (methodPointer.isNull())
+
+		if (methodPointer.isNull()) {
 			return "bad ramMethod";
-	
+		}
+
 		constantPool = ConstantPoolHelpers.J9_CP_FROM_METHOD(methodPointer);
-		if (constantPool.isNull())  {
+		if (constantPool.isNull()) {
 			return "error reading constant pool from ramMethod";
 		}
 		className = ConstantPoolHelpers.J9_CLASS_FROM_CP(constantPool);
-		if (className.isNull())  {
+		if (className.isNull()) {
 			return "error reading class name from constant pool";
 		}
-	
-	
+
 		J9ROMNameAndSignaturePointer nameAndSignature = ROMHelp.J9_ROM_METHOD_FROM_RAM_METHOD(methodPointer).nameAndSignature();
-		String name= J9UTF8Helper.stringValue(nameAndSignature.name());
+		String name = J9UTF8Helper.stringValue(nameAndSignature.name());
 		String signature = J9UTF8Helper.stringValue(nameAndSignature.signature());
-		
-		return J9ClassHelper.getName(className) + "." + name+ signature;
+
+		return J9ClassHelper.getName(className) + "." + name + signature;
 	}
 }

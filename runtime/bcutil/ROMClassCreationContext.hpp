@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef ROMCLASSCREATIONCONTEXT_HPP_
@@ -52,6 +52,8 @@ public:
 		_clazz(NULL),
 		_className(NULL),
 		_classNameLength(0),
+		_hostPackageName(NULL),
+		_hostPackageLength(0),
 		_intermediateClassData(NULL),
 		_intermediateClassDataLength(0),
 		_classLoader(NULL),
@@ -71,7 +73,8 @@ public:
 		_doDebugCompare(false),
 		_existingRomMethod(NULL),
 		_reusingIntermediateClassData(false),
-		_creatingIntermediateROMClass(false)
+		_creatingIntermediateROMClass(false),
+		_patchMap(NULL)
 	{
 	}
 
@@ -88,6 +91,8 @@ public:
 		_clazz(NULL),
 		_className(NULL),
 		_classNameLength(0),
+		_hostPackageName(NULL),
+		_hostPackageLength(0),
 		_intermediateClassData(NULL),
 		_intermediateClassDataLength(0),
 		_classLoader(NULL),
@@ -107,14 +112,15 @@ public:
 		_doDebugCompare(false),
 		_existingRomMethod(NULL),
 		_reusingIntermediateClassData(false),
-		_creatingIntermediateROMClass(false)
+		_creatingIntermediateROMClass(false),
+		_patchMap(NULL)
 	{
 	}
 
 	ROMClassCreationContext(
 			J9PortLibrary *portLibrary, J9JavaVM *javaVM, U_8 *classFileBytes, UDATA classFileSize, UDATA bctFlags, UDATA bcuFlags, UDATA findClassFlags, AllocationStrategy *allocationStrategy,
-			U_8 *className, UDATA classNameLength, U_8 *intermediateClassData, U_32 intermediateClassDataLength, J9ROMClass *romClass, J9Class *clazz, J9ClassLoader *classLoader, bool classFileBytesReplaced,
-			bool creatingIntermediateROMClass, J9TranslationLocalBuffer *localBuffer) :
+			U_8 *className, UDATA classNameLength, U_8 *hostPackageName, UDATA hostPackageLength, U_8 *intermediateClassData, U_32 intermediateClassDataLength, J9ROMClass *romClass, J9Class *clazz, 
+			J9ClassLoader *classLoader, bool classFileBytesReplaced, bool creatingIntermediateROMClass, J9TranslationLocalBuffer *localBuffer) :
 		_portLibrary(portLibrary),
 		_javaVM(javaVM),
 		_classFileBytes(classFileBytes),
@@ -127,6 +133,8 @@ public:
 		_clazz(clazz),
 		_className(className),
 		_classNameLength(classNameLength),
+		_hostPackageName(hostPackageName),
+		_hostPackageLength(hostPackageLength),
 		_intermediateClassData(intermediateClassData),
 		_intermediateClassDataLength(intermediateClassDataLength),
 		_classLoader(classLoader),
@@ -150,13 +158,15 @@ public:
 		_doDebugCompare(false),
 		_existingRomMethod(NULL),
 		_reusingIntermediateClassData(false),
-		_creatingIntermediateROMClass(creatingIntermediateROMClass)
+		_creatingIntermediateROMClass(creatingIntermediateROMClass),
+		_patchMap(NULL)
 	{
 		if ((NULL != _javaVM) && (NULL != _javaVM->dynamicLoadBuffers)) {
 			/* localBuffer should not be NULL */
 			Trc_BCU_Assert_True(NULL != localBuffer);
 			_cpIndex = localBuffer->entryIndex;
 			_loadLocation = localBuffer->loadLocationType;
+			_patchMap = localBuffer->patchMap;
 			_sharedStringInternTable = _javaVM->sharedInvariantInternTable;
 			_interningEnabled = J9_ARE_ALL_BITS_SET(_bcuFlags, BCU_ENABLE_INVARIANT_INTERNING) && J9_ARE_NO_BITS_SET(_findClassFlags, J9_FINDCLASS_FLAG_ANON);
 			if (0 != (bcuFlags & BCU_VERBOSE)) {
@@ -167,13 +177,15 @@ public:
 			memset(&_verboseRecords[0], 0, sizeof(_verboseRecords));
 		}
 	}
-	
+
 	bool isCreatingIntermediateROMClass() const { return _creatingIntermediateROMClass; }
 	U_8 *classFileBytes() const { return _classFileBytes; }
 	UDATA classFileSize() const { return _classFileSize; }
 	UDATA findClassFlags() const {return _findClassFlags; }
 	U_8* className() const {return _className; }
 	UDATA classNameLength() const {return _classNameLength; }
+	U_8* hostPackageName() const {return _hostPackageName; }
+	UDATA hostPackageLength() const {return _hostPackageLength; }
 	U_32 bctFlags() const { return (U_32) _bctFlags; } /* Only use this for j9bcutil_readClassFileBytes */
 	AllocationStrategy *allocationStrategy() const { return _allocationStrategy; }
 	bool classFileBytesReplaced() const { return _classFileBytesReplaced; }
@@ -189,6 +201,7 @@ public:
 	J9PortLibrary *portLibrary() const { return _portLibrary; }
 	UDATA cpIndex() const { return _cpIndex; }
 	UDATA loadLocation() const {return _loadLocation; }
+	J9ClassPatchMap *patchMap() const { return _patchMap; }
 	J9SharedInvariantInternTable *sharedStringInternTable() const { return _sharedStringInternTable; }
 
 	U_8 *intermediateClassData() const { return _intermediateClassData; }
@@ -221,13 +234,35 @@ public:
 	bool shouldPreserveSourceDebugExtension() const { return 0 == (_bctFlags & (BCT_StripSourceDebugExtension|BCT_StripDebugAttributes)); }
 	bool isClassUnsafe() const { return J9_FINDCLASS_FLAG_UNSAFE == (_findClassFlags & J9_FINDCLASS_FLAG_UNSAFE); }
 	bool isClassAnon() const { return J9_FINDCLASS_FLAG_ANON == (_findClassFlags & J9_FINDCLASS_FLAG_ANON); }
+	bool alwaysSplitBytecodes() const { return J9_ARE_ANY_BITS_SET(_bctFlags, BCT_AlwaysSplitBytecodes); }
+	bool isClassHidden() const { return J9_FINDCLASS_FLAG_HIDDEN == (_findClassFlags & J9_FINDCLASS_FLAG_HIDDEN);}
+	bool isHiddenClassOptNestmateSet() const { return J9_FINDCLASS_FLAG_CLASS_OPTION_NESTMATE == (_findClassFlags & J9_FINDCLASS_FLAG_CLASS_OPTION_NESTMATE);}
+	bool isHiddenClassOptStrongSet() const { return J9_FINDCLASS_FLAG_CLASS_OPTION_STRONG == (_findClassFlags & J9_FINDCLASS_FLAG_CLASS_OPTION_STRONG);}
+
+	bool isClassUnmodifiable() const {
+		bool unmodifiable = false;
+		if (NULL != _javaVM) {
+			if ((J2SE_VERSION(_javaVM) >= J2SE_V11) 
+				&& (isClassAnon() || isClassHidden())
+			) {
+				unmodifiable = true;
+			} else if (NULL == J9VMJAVALANGOBJECT_OR_NULL(_javaVM)) {
+				/* Object is currently only allowed to be redefined in fast HCR */
+				if (areExtensionsEnabled(_javaVM)) {
+					unmodifiable = true;
+				}
+			}
+		}
+		return unmodifiable;
+	}
 
 	bool isIntermediateClassDataShareable() const {
 		bool shareable = false;
 		U_8 *intermediateData = getIntermediateClassDataFromPreviousROMClass();
 		U_32 intermediateDataLength = getIntermediateClassDataLengthFromPreviousROMClass();
 		if ((NULL != intermediateData)
-			&& (TRUE == j9shr_Query_IsAddressInCache(_javaVM, intermediateData, intermediateDataLength))
+			&& (TRUE == j9shr_Query_IsAddressInReadWriteCache(_javaVM, intermediateData, intermediateDataLength))
+			/* J9ROMClass pointing to intermediateData using SRP, so share only when intermediateData is in readWriteCache */
 		) {
 			shareable = true;
 		}
@@ -255,14 +290,16 @@ public:
 		 * Any of the following conditions prevent the sharing of a ROMClass:
 		 *  - classloader is not shared classes enabled
 		 *  - cache is full
-		 *  - Unsafe classes are not shared
+		 *  - the class is unsafe and isUnsafeClassSharingEnabled returns false (see the function isUnsafeClassShareable() for more details)
+		 *  - the class is a hidden class and isHiddenClassSharingEnabled() returns false (Java 15 and up, see the function isHiddenClassSharingEnabled() for more details)
 		 *  - shared cache is BCI enabled and class is modified by BCI agent
 		 *  - shared cache is BCI enabled and ROMClass being store is intermediate ROMClass
 		 *  - the class is loaded from a patch path
 		 */
 		if (isSharedClassesEnabled()
 			&& isClassLoaderSharedClassesEnabled()
-			&& !isClassUnsafe()
+			&& (!isClassUnsafe() || isUnsafeClassSharingEnabled())
+			&& (!isClassHidden() || isHiddenClassSharingEnabled())
 			&& !(isSharedClassesBCIEnabled()
 			&& (classFileBytesReplaced() || isCreatingIntermediateROMClass()))
 			&& (LOAD_LOCATION_PATCH_PATH != loadLocation())
@@ -271,6 +308,48 @@ public:
 		} else {
 			return false;
 		}
+	}
+
+	bool isUnsafeClassSharingEnabled() const {
+		/*
+		 * The command line option -XX:[+/-]ShareUnsafeClasses, combined with -XX:[+/-]ShareAnonymousClasses will have 4 different behaviours:
+		 * 1. -XX:+ShareAnonymousClasses -XX:+ShareUnsafeClasses, this will share all unsafe classes
+		 * 2. -XX:+ShareAnonymousClasses -XX:-ShareUnsafeClasses, this will only share anonymous classes and not other unsafe classes
+		 * 3. -XX:-ShareAnonymousClasses -XX:+ShareUnsafeClasses, this will only share unsafe classes that are not anonymous
+		 * 4. -XX:-ShareAnonymousClasses -XX:-ShareUnsafeClasses, this will share neither.
+		 * The current default behavior is the 1st option.
+		 */
+		bool isEnabled = false;
+
+		bool isAnonDefineClassSharingEnabled = J9_ARE_ALL_BITS_SET(_javaVM->sharedClassConfig->runtimeFlags, J9SHR_RUNTIMEFLAG_ENABLE_SHAREANONYMOUSCLASSES);
+		bool isUnsafeDefineClassSharingEnabled = J9_ARE_ALL_BITS_SET(_javaVM->sharedClassConfig->runtimeFlags, J9SHR_RUNTIMEFLAG_ENABLE_SHAREUNSAFECLASSES);
+
+		if (isClassAnon()) {
+			/*
+			 * Since the class loader shared classes enable flag is set properly and it is checked in the isClassLoaderSharedClassesEnabled() function
+			 * before this function is called in isROMClassShareable(). Thus, we can just assert isAnonDefineClassSharingEnabled is true.
+			 */
+			Trc_BCU_Assert_True(isAnonDefineClassSharingEnabled);
+			isEnabled = true;
+		} else if (isUnsafeDefineClassSharingEnabled) {
+			/* Classes loaded  by Unsafe.defineClass */
+			isEnabled = true;
+		}
+		return isEnabled;
+	}
+	
+	bool isHiddenClassSharingEnabled() const {
+		/*
+		 * In java 15 and up, hidden class is introduced to replace unsafe anonymous class, so use existing CML options
+		 * -XX:[+/-]ShareAnonymousClasses to control the class sharing behaviour of hidden classes.
+		 * The command line option -XX:[+/-]ShareUnsafeClasses, combined with -XX:[+/-]ShareAnonymousClasses will have 4 different behaviours:
+		 * 1. -XX:+ShareAnonymousClasses -XX:+ShareUnsafeClasses, this will share all hidden classes
+		 * 2. -XX:+ShareAnonymousClasses -XX:-ShareUnsafeClasses, this will only share hidden classes and not other unsafe classes
+		 * 3. -XX:-ShareAnonymousClasses -XX:+ShareUnsafeClasses, this will only share unsafe classes that are not hidden classes
+		 * 4. -XX:-ShareAnonymousClasses -XX:-ShareUnsafeClasses, this will share neither.
+		 * The current default behavior is the 1st option.
+		 */
+		return J9_ARE_ALL_BITS_SET(_javaVM->sharedClassConfig->runtimeFlags, J9SHR_RUNTIMEFLAG_ENABLE_SHAREANONYMOUSCLASSES);
 	}
 
 	/*
@@ -320,7 +399,36 @@ public:
 	{
 		if (!isRedefining() && !isRetransforming()) {
 			if (NULL != _className) {
-				if ((0 == J9UTF8_DATA_EQUALS(_className, _classNameLength, className, classNameLength))) {
+				U_16 classNameLenToCompare0 = (U_16)_classNameLength;
+				U_16 classNameLenToCompare1 = classNameLength;
+				BOOLEAN misMatch = FALSE;
+				if (isClassHidden()) {
+					if (isROMClassShareable()) {
+						U_8* lambdaClass0 = (U_8*)getLastDollarSignOfLambdaClassName((const char*)_className, _classNameLength);
+						U_8* lambdaClass1 = (U_8*)getLastDollarSignOfLambdaClassName((const char*)className, classNameLength);
+						if ((NULL != lambdaClass0) 
+							&& (NULL != lambdaClass1)
+						) {
+							/**
+							 * Lambda class has class name: HostClassName$$Lambda$<IndexNumber>/0x0000000000000000. 
+							 * Do not need to compare the IndexNumber as it can be different from run to run.
+							 */
+							classNameLenToCompare0 = (U_16)(lambdaClass0 - _className + 1);
+							classNameLenToCompare1 = (U_16)(lambdaClass1 - className + 1);
+						} else if ((NULL == lambdaClass0) && (NULL == lambdaClass1)) {
+							/* for hidden class className has ROM address appended at the end, _className does not have that */
+							classNameLenToCompare1 = (U_16)_classNameLength;
+						} else {
+							misMatch = TRUE;
+						}
+					} else {
+						/* for hidden class className has ROM address appended at the end, _className does not have that */
+						classNameLenToCompare1 = (U_16)_classNameLength;
+					}
+				}
+				if (misMatch || 
+					(!J9UTF8_DATA_EQUALS(_className, classNameLenToCompare0, className, classNameLenToCompare1))
+				) {
 #define J9WRONGNAME " (wrong name: "
 					PORT_ACCESS_FROM_PORT(_portLibrary);
 					UDATA errorStringSize = _classNameLength + sizeof(J9WRONGNAME) + 1 + classNameLength;
@@ -328,23 +436,24 @@ public:
 					if (NULL != errorUTF) {
 						U_8 *current = errorUTF;
 
-						memcpy(current, _className, _classNameLength);
-						current += _classNameLength;
-						memcpy(current, J9WRONGNAME, sizeof(J9WRONGNAME) - 1);
-						current += sizeof(J9WRONGNAME) - 1;
 						memcpy(current, className, classNameLength);
 						current += classNameLength;
+						memcpy(current, J9WRONGNAME, sizeof(J9WRONGNAME) - 1);
+						current += sizeof(J9WRONGNAME) - 1;
+						memcpy(current, _className, _classNameLength);
+						current += _classNameLength;
 						*current++ = (U_8) ')';
 						*current = (U_8) '\0';
-
 					}
 					recordCFRError(errorUTF);
 					return ClassNameMismatch;
 #undef J9WRONGNAME
 				}
-			} else if (shouldCheckPackageName()  /* classname is null */
-					&& (0 == strncmp((char *) className, "java/", 5))
-					&& (!isClassAnon())) {
+			} else if (shouldCheckPackageName() /* classname is null */
+					&& (classNameLength >= 5)
+					&& (0 == memcmp(className, "java/", 5))
+					&& !isClassAnon()
+			) {
 				/*
 				 * Non-bootstrap classloaders may not load nto the "java" package.
 				 * if classname is not null, the JCL or JNI has already checked it
@@ -360,22 +469,22 @@ public:
 	 * Report an invalid annotation error against a particular member (field or method).
 	 * This will attempt to construct and set an error message based on the supplied
 	 * NLS key. Regardless, an appropriate BuildResult value will be returned.
-	 * 
+	 *
 	 * @param className	UTF8 data representing the class containing the member
 	 * @param classNameLength	length of UTF8 data representing the class containing the member
 	 * @param memberName	UTF8 data representing the member with the annotation
 	 * @param memberNameLength	length of UTF8 data representing the member with the annotation
 	 * @param module_name	the module portion of the NLS key
 	 * @param message_num	the message portion of the NLS key
-	 * @return the BuildResult value 
+	 * @return the BuildResult value
 	 */
-	BuildResult 
+	BuildResult
 	reportInvalidAnnotation(U_8 *className, U_16 classNameLength, U_8 *memberName, U_16 memberNameLength, U_32 module_name, U_32 message_num)
 	{
 		const char* nlsMessage = NULL;
 		PORT_ACCESS_FROM_PORT(_portLibrary);
-		
-		/* Call direct through the port library to circumvent the macro, 
+
+		/* Call direct through the port library to circumvent the macro,
 		 * which assumes that the key is a single parameter.
 		 */
 		nlsMessage = OMRPORT_FROM_J9PORT(PORTLIB)->nls_lookup_message(OMRPORT_FROM_J9PORT(PORTLIB), J9NLS_DO_NOT_PRINT_MESSAGE_TAG | J9NLS_DO_NOT_APPEND_NEWLINE, module_name, message_num, NULL);
@@ -505,7 +614,7 @@ public:
 			reportVerboseStatistics();
 		}
 	}
-	
+
 	void forceDebugDataInLine()
 	{
 		_forceDebugDataInLine = true;
@@ -520,12 +629,12 @@ public:
 		}
 	}
 
-	void startDebugCompare() 
+	void startDebugCompare()
 	{
 		_doDebugCompare = true;
 	}
 
-	void endDebugCompare() 
+	void endDebugCompare()
 	{
 		_doDebugCompare = false;
 	}
@@ -545,7 +654,7 @@ public:
 	{
 		return (0 != (romMethodModifiers() & J9AccMethodHasDebugInfo));
 	}
-	
+
 	bool romMethodHasLineNumberCountCompressed()
 	{
 		bool retval = false;
@@ -558,7 +667,7 @@ public:
 		}
 		return retval;
 	}
-	
+
 	U_32 romMethodCompressedLineNumbersLength()
 	{
 		U_32 retval = 0;
@@ -588,16 +697,16 @@ public:
 		}
 	}
 
-	bool romMethodDebugDataIsInline() 
+	bool romMethodDebugDataIsInline()
 	{
 		bool retval = true;
-		J9ROMMethod * romMethod = romMethodGetCachedMethod();	
-		/* romMethodHasDebugData() is called to ensure methodDebugInfoFromROMMethod() 
+		J9ROMMethod * romMethod = romMethodGetCachedMethod();
+		/* romMethodHasDebugData() is called to ensure methodDebugInfoFromROMMethod()
 		 * will return a valid address to inspect.
 		 */
 		if ((NULL != romMethod) && (true == romMethodHasDebugData())) {
 			/* methodDebugInfoFromROMMethod() is called instead of getMethodDebugInfoFromROMMethod()
-			 * because getMethodDebugInfoFromROMMethod() will follow the srp to 'out of line' debug 
+			 * because getMethodDebugInfoFromROMMethod() will follow the srp to 'out of line' debug
 			 * data (and cause problems checking "1 ==(debugInfo->srpToVarInfo & 1)")
 			 */
 			J9MethodDebugInfo* debugInfo = methodDebugInfoFromROMMethod(romMethod);
@@ -606,12 +715,12 @@ public:
 		return retval;
 	}
 
-	void romMethodCacheCurrentRomMethod(IDATA offset) 
+	void romMethodCacheCurrentRomMethod(IDATA offset)
 	{
 		_existingRomMethod = romMethodFromOffset(offset);
 	}
 
-	J9ROMMethod * romMethodGetCachedMethod() 
+	J9ROMMethod * romMethodGetCachedMethod()
 	{
 		return _existingRomMethod;
 	}
@@ -638,7 +747,7 @@ public:
 			return 0;
 		}
 	}
-	
+
 	bool romClassHasSourceDebugExtension()
 	{
 		return (0 != (romClassOptionalFlags() & J9_ROMCLASS_OPTINFO_SOURCE_DEBUG_EXTENSION));
@@ -648,7 +757,7 @@ public:
 	{
 		return (0 != (romClassOptionalFlags() & J9_ROMCLASS_OPTINFO_SOURCE_FILE_NAME));
 	}
-	
+
 private:
 	void reportVerboseStatistics();
 	void verbosePrintPhase(ROMClassCreationPhase phase, bool *printedPhases, UDATA indent);
@@ -675,6 +784,8 @@ private:
 	J9Class *_clazz;
 	U_8 *_className;
 	UDATA _classNameLength;
+	U_8* _hostPackageName;
+	UDATA _hostPackageLength;
 	U_8 *_intermediateClassData;
 	U_32 _intermediateClassDataLength;
 	J9ClassLoader *_classLoader;
@@ -696,7 +807,8 @@ private:
 	J9ROMMethod * _existingRomMethod;
 	bool _reusingIntermediateClassData;
 	bool _creatingIntermediateROMClass;
-	
+	J9ClassPatchMap *_patchMap;
+
 	J9ROMMethod * romMethodFromOffset(IDATA offset);
 };
 

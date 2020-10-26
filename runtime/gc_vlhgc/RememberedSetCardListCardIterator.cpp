@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,14 +17,14 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "RememberedSetCardListCardIterator.hpp"
 #include "InterRegionRememberedSet.hpp"
 
 bool
-GC_RememberedSetCardListCardIterator::nextBuffer(MM_EnvironmentBase* env, MM_CardBufferControlBlock *cardBufferControlBlock)
+GC_RememberedSetCardListCardIterator::nextBuffer(MM_EnvironmentBase *env, MM_CardBufferControlBlock *cardBufferControlBlock)
 {
 	bool foundBuffer = false;
 
@@ -37,8 +37,9 @@ GC_RememberedSetCardListCardIterator::nextBuffer(MM_EnvironmentBase* env, MM_Car
 		_cardIndex = 0;
 
 		/* _cardIndexTop has to be between 1 and MM_RememberedSetCardBucket::MAX_BUFFER_SIZE, inclusive */
-		if (_currentBucket->isCurrentSlotWithinBuffer(_bufferCardList)) {
-			_cardIndexTop = _currentBucket->_current - _bufferCardList;
+		if (_currentBucket->isCurrentSlotWithinBuffer(env, _bufferCardList)) {
+			bool const compressed = env->compressObjectReferences();
+			_cardIndexTop = MM_RememberedSetCard::subtractCardAddresses(_currentBucket->_current, _bufferCardList, compressed);
 		} else {
 			_cardIndexTop = MM_RememberedSetCardBucket::MAX_BUFFER_SIZE;
 		}
@@ -68,14 +69,17 @@ GC_RememberedSetCardListCardIterator::nextBucket(MM_EnvironmentBase* env)
 	return true;
 }
 
-MM_RememberedSetCard
-GC_RememberedSetCardListCardIterator::nextReferencingCard(MM_EnvironmentBase* env)
+UDATA
+GC_RememberedSetCardListCardIterator::nextReferencingCard(MM_EnvironmentBase *env)
 {
+	bool const compressed = env->compressObjectReferences();
 	do {
 		do {
 			/* next card within the buffer */
 			if (_cardIndex < _cardIndexTop) {
-				return _bufferCardList[_cardIndex++];
+				MM_RememberedSetCard *cardAddress = MM_RememberedSetCard::addToCardAddress(_bufferCardList, _cardIndex, compressed);
+				_cardIndex += 1;
+				return MM_RememberedSetCard::readCard(cardAddress, compressed);
 			}
 		} while (nextBuffer(env, _cardBufferControlBlockNext));
 	} while (nextBucket(env));
@@ -87,6 +91,6 @@ void *
 GC_RememberedSetCardListCardIterator::nextReferencingCardHeapAddress(MM_EnvironmentBase* env)
 {
 	MM_InterRegionRememberedSet *interRegionRememberedSet = MM_GCExtensions::getExtensions(env)->interRegionRememberedSet;
-	MM_RememberedSetCard card = nextReferencingCard(env);
+	UDATA card = nextReferencingCard(env);
 	return interRegionRememberedSet->convertHeapAddressFromRememberedSetCard(card);
 }

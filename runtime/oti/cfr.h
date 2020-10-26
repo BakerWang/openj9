@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef CFR_H
@@ -26,7 +26,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 
 #include "j9.h"
 #include "j9port.h"
@@ -71,6 +70,13 @@ typedef struct J9CfrLocalVariableTypeTableEntry {
     U_16 signatureIndex;
     U_16 index;
 } J9CfrLocalVariableTypeTableEntry;
+
+typedef struct J9CfrRecordComponent {
+    U_16 nameIndex;
+    U_16 descriptorIndex;
+    U_16 attributesCount;
+    struct J9CfrAttribute** attributes;
+} J9CfrRecordComponent;
 
 typedef struct J9CfrAnnotationElement {
     U_8 tag;
@@ -232,7 +238,9 @@ typedef struct J9CfrAttribute {
 #define CFR_ATTRIBUTE_RuntimeInvisibleTypeAnnotations  23
 #define CFR_ATTRIBUTE_MethodParameters 24
 #define CFR_ATTRIBUTE_NestMembers 25
-#define CFR_ATTRIBUTE_MemberOfNest 26
+#define CFR_ATTRIBUTE_NestHost 26
+#define CFR_ATTRIBUTE_Record 27
+#define CFR_ATTRIBUTE_PermittedSubclasses 28
 #define CFR_ATTRIBUTE_StrippedLocalVariableTypeTable  122
 #define CFR_ATTRIBUTE_StrippedSourceDebugExtension  123
 #define CFR_ATTRIBUTE_StrippedInnerClasses  124
@@ -478,14 +486,14 @@ typedef struct J9CfrAttributeSynthetic {
     UDATA romAddress;
 } J9CfrAttributeSynthetic;
 
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
-typedef struct J9CfrAttributeMemberOfNest {
+#if JAVA_SPEC_VERSION >= 11
+typedef struct J9CfrAttributeNestHost {
 	U_8 tag;
 	U_16 nameIndex;
 	U_32 length;
 	UDATA romAddress;
 	U_16 hostClassIndex;
-} J9CfrAttributeMemberOfNest;
+} J9CfrAttributeNestHost;
 
 typedef struct J9CfrAttributeNestMembers {
 	U_8 tag;
@@ -495,7 +503,7 @@ typedef struct J9CfrAttributeNestMembers {
 	U_16 numberOfClasses;
 	U_16* classes;
 } J9CfrAttributeNestMembers;
-#endif /* J9VM_OPT_VALHALLA_NESTMATES */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 
 typedef struct J9CfrAttributeUnknown {
     U_8 tag;
@@ -504,6 +512,24 @@ typedef struct J9CfrAttributeUnknown {
     UDATA romAddress;
     U_8* value;
 } J9CfrAttributeUnknown;
+
+typedef struct J9CfrAttributeRecord {
+    U_8 tag;
+    U_16 nameIndex;
+    U_32 length;
+    UDATA romAddress;
+    U_16 numberOfRecordComponents;
+    struct J9CfrRecordComponent* recordComponents;
+} J9CfrAttributeRecord;
+
+typedef struct J9CfrAttributePermittedSubclasses {
+    U_8 tag;
+    U_16 nameIndex;
+    U_32 length;
+    UDATA romAddress;
+    U_16 numberOfClasses;
+    U_16* classes;
+} J9CfrAttributePermittedSubclasses;
 
 /* @ddr_namespace: map_to_type=J9CfrConstantPoolInfo */
 
@@ -531,7 +557,10 @@ typedef struct J9CfrConstantPoolInfo {
 #define CFR_CONSTANT_NameAndType  12
 #define CFR_CONSTANT_MethodHandle  15
 #define CFR_CONSTANT_MethodType  16
+#define CFR_CONSTANT_Dynamic  17
 #define CFR_CONSTANT_InvokeDynamic  18
+#define CFR_CONSTANT_Module 19
+#define CFR_CONSTANT_Package 20
 #define CFR_ReferencedBit   0x80
 #define CFR_ReferencedMask  0x7F
 #define CFR_SeenByConvertInvokevirtualToSpecial  1
@@ -777,19 +806,9 @@ typedef struct J9CfrMethod {
 #define CFR_BC_ifnonnull 199
 #define CFR_BC_goto_w 200
 #define CFR_BC_jsr_w 201
-#if defined(J9VM_OPT_VALHALLA_MVT)
-#define CFR_BC_vload 217
-#define CFR_BC_vstore 218
-#define CFR_BC_vreturn 219
-#define CFR_BC_vbox 220
-#define CFR_BC_vunbox 221
-#define CFR_BC_vaload 222
-#define CFR_BC_vastore 223
-#define CFR_BC_vdefault 224
-#define CFR_BC_vgetfield 225
-#define CFR_BC_vwithfield 226
-#endif /* defined(J9VM_OPT_VALHALLA_MVT) */
 #define CFR_BC_breakpoint 202  			/* Reserved opcodes */
+#define CFR_BC_defaultvalue 203
+#define CFR_BC_withfield 204
 #define CFR_BC_impdep1 254
 #define CFR_BC_impdep2 255
 #define CFR_BC_invokehandle 232 		/* JSR 292 internals */
@@ -813,6 +832,7 @@ typedef struct J9CfrClassFile {
     U_16 methodsCount;
     U_16 attributesCount;
     U_16 firstUTF8CPIndex;
+    U_16 lastUTF8CPIndex;
     U_16 firstNATCPIndex;
     struct J9CfrConstantPoolInfo* constantPool;
     U_16* interfaces;
@@ -832,6 +852,7 @@ typedef struct J9CfrClassFile {
 #define CFR_ACC_BRIDGE  					0x00000040
 #define CFR_ACC_VOLATILE  					0x00000040
 #define CFR_ACC_TRANSIENT  					0x00000080
+#define CFR_ACC_VALUE_TYPE					0x00000100
 #define CFR_ACC_VARARGS  					0x00000080
 #define CFR_ACC_NATIVE  					0x00000100
 #define CFR_ACC_INTERFACE  					0x00000200
@@ -841,6 +862,7 @@ typedef struct J9CfrClassFile {
 #define CFR_ACC_ANNOTATION 					0x00002000
 #define CFR_ACC_ENUM  						0x00004000
 #define CFR_ACC_MANDATED  					0x00008000
+#define CFR_ACC_MODULE						0x00008000
 #define CFR_ACC_GETTER_METHOD  				0x00000200
 #define CFR_ACC_FORWARDER_METHOD  			0x00002000
 #define CFR_ACC_EMPTY_METHOD  				0x00004000
@@ -862,11 +884,15 @@ typedef struct J9CfrClassFile {
 #define CFR_MAJOR_VERSION  45
 #define CFR_MINOR_VERSION  3
 #define CFR_PUBLIC_PRIVATE_PROTECTED_MASK	(CFR_ACC_PUBLIC | CFR_ACC_PRIVATE | CFR_ACC_PROTECTED)
+#if defined(J9VM_OPT_VALHALLA_VALUE_TYPES)
+#define CFR_CLASS_ACCESS_MASK					(CFR_ACC_PUBLIC | CFR_ACC_FINAL | CFR_ACC_SUPER | CFR_ACC_INTERFACE | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC | CFR_ACC_ANNOTATION | CFR_ACC_ENUM | CFR_ACC_VALUE_TYPE)
+#else /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 #define CFR_CLASS_ACCESS_MASK					(CFR_ACC_PUBLIC | CFR_ACC_FINAL | CFR_ACC_SUPER | CFR_ACC_INTERFACE | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC | CFR_ACC_ANNOTATION | CFR_ACC_ENUM)
+#endif /* defined(J9VM_OPT_VALHALLA_VALUE_TYPES) */
 #define CFR_INTERFACE_CLASS_ACCESS_MASK			(CFR_ACC_PUBLIC | CFR_ACC_INTERFACE | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC | CFR_ACC_ANNOTATION)
 #define CFR_FIELD_ACCESS_MASK  					(CFR_ACC_PUBLIC | CFR_ACC_PRIVATE | CFR_ACC_PROTECTED | CFR_ACC_STATIC | CFR_ACC_FINAL | CFR_ACC_VOLATILE | CFR_ACC_TRANSIENT | CFR_ACC_SYNTHETIC | CFR_ACC_ENUM)
 #define CFR_INTERFACE_FIELD_ACCESS_MASK  		(CFR_ACC_PUBLIC | CFR_ACC_STATIC | CFR_ACC_FINAL | CFR_ACC_SYNTHETIC)
-#define CFR_INTERFACE_FIELD_ACCESS_REQUIRED  	(CFR_ACC_PUBLIC | CFR_ACC_STATIC | CFR_ACC_FINAL) 
+#define CFR_INTERFACE_FIELD_ACCESS_REQUIRED  	(CFR_ACC_PUBLIC | CFR_ACC_STATIC | CFR_ACC_FINAL)
 #define CFR_METHOD_ACCESS_MASK  				(CFR_ACC_PUBLIC | CFR_ACC_PRIVATE | CFR_ACC_PROTECTED | CFR_ACC_STATIC | CFR_ACC_FINAL | CFR_ACC_SYNCHRONIZED | CFR_ACC_BRIDGE | CFR_ACC_VARARGS | CFR_ACC_NATIVE | CFR_ACC_STRICT | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC)
 #define CFR_ABSTRACT_METHOD_ACCESS_MASK  		(CFR_ACC_PUBLIC | CFR_ACC_PROTECTED | CFR_ACC_BRIDGE | CFR_ACC_VARARGS | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC)
 #define CFR_INTERFACE_METHOD_ACCESS_MASK  		(CFR_ACC_PUBLIC | CFR_ACC_BRIDGE | CFR_ACC_VARARGS | CFR_ACC_ABSTRACT | CFR_ACC_SYNTHETIC)
@@ -902,13 +928,15 @@ typedef struct J9CfrClassFile {
 #define CFR_DECODE_J9_MULTIANEWARRAY	23
 #define CFR_DECODE_J9_METHODTYPEREF		24
 #define CFR_J9FLAG_HAS_JSR  		1
+#define CFR_J9FLAG_IS_RECORD        2
+#define CFR_J9FLAG_IS_SEALED        4
 
 #if defined(J9VM_ENV_DATA64)
-#define ROM_ADDRESS_LENGTH 16
-#define ROM_ADDRESS_FORMAT "%016X\0"
+#define ROM_ADDRESS_LENGTH 18
+#define ROM_ADDRESS_FORMAT "0x%016x"
 #else
-#define ROM_ADDRESS_LENGTH 8
-#define ROM_ADDRESS_FORMAT "%08X\0"
+#define ROM_ADDRESS_LENGTH 10
+#define ROM_ADDRESS_FORMAT "0x%08x"
 #endif
 
 #define CFR_METHOD_EXT_HAS_METHOD_TYPE_ANNOTATIONS 0x01
@@ -916,6 +944,9 @@ typedef struct J9CfrClassFile {
 #define CFR_METHOD_EXT_INVALID_CP_ENTRY 0x04
 
 #define ANON_CLASSNAME_CHARACTER_SEPARATOR '/'
+
+#define CFR_FOUND_CHARS_IN_EXTENDED_MUE_FORM 0x1
+#define CFR_FOUND_SEPARATOR_IN_MUE_FORM 0x2
 
 #ifdef __cplusplus
 }

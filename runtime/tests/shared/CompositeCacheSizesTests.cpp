@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 extern "C"
@@ -78,7 +78,7 @@ createTestCompositeCache (J9JavaVM* vm, SH_CompositeCacheImpl** cc, J9SharedClas
 	memset((void*)memForCC, 0, totalSize);
 
 	/*Request non-persistent cache */
-	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false);
+	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false, 0);
 	cache = (char*)((char*)actualCC + requiredBytes);
 	if (actualCC->startup(vm->mainThread, piconfig, cache, &runtimeFlags, 1, "myRoot", NULL, J9SH_DIRPERM_ABSENT, &cacheSize, &localCrashCntr, true, &cacheHasIntegrity) != 0) {
 		ERRPRINTF(("Failed to start the composite cache.\n"));
@@ -103,7 +103,7 @@ testCompositeCacheSizes(J9JavaVM* vm)
 
 	IDATA rc = TEST_PASS;
 
-	vm->internalVMFunctions->internalAcquireVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(vm->mainThread);
 	UnitTest::unitTest = UnitTest::COMPOSITE_CACHE_SIZES_TEST;
 	rc |= test1(vm);
 	rc |= test2(vm);
@@ -124,7 +124,7 @@ testCompositeCacheSizes(J9JavaVM* vm)
 	rc |= test14(vm);
 	UnitTest::unitTest = UnitTest::NO_TEST;
 
-	vm->internalVMFunctions->internalReleaseVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalExitVMToJNI(vm->mainThread);
 
 	j9tty_printf(PORTLIB, "%s: %s\n", testName, TEST_PASS==rc?"PASS":"FAIL");
 	if (rc == TEST_ERROR) {
@@ -161,7 +161,7 @@ test1(J9JavaVM* vm)
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
 
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -212,7 +212,7 @@ test2(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -283,7 +283,7 @@ test3(J9JavaVM* vm)
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
 	/* 1.1 * (maxSharedStringTableSize * 300) might be greater than SHMMAX and pass J9SHR_RUNTIMEFLAG_ENABLE_PERSISTENT_CACHE to avoid cache size to be resized to SHMMAX */
-	ensureCorrectCacheSizes(vm->portLibrary, J9SHR_RUNTIMEFLAG_ENABLE_PERSISTENT_CACHE, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, J9SHR_RUNTIMEFLAG_ENABLE_PERSISTENT_CACHE, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -336,7 +336,7 @@ test4(J9JavaVM* vm)
 	piconfig.sharedClassDebugAreaBytes = -1;
 	piconfig.sharedClassSoftMaxBytes = -1;
 
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, &piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, &piconfig);
 	requiredBytes = SH_CompositeCacheImpl::getRequiredConstrBytesWithCommonInfo(false, false);
 	totalSize = requiredBytes + piconfig.sharedClassCacheSize;
 	if (!(memForCC = (SH_CompositeCacheImpl*)j9mem_allocate_memory(totalSize, J9MEM_CATEGORY_CLASSES))) {
@@ -349,7 +349,7 @@ test4(J9JavaVM* vm)
 	memset((void*)memForCC, 0, totalSize);
 
 	/*Request non-persistent cache */
-	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false);
+	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false, 0);
 	cache = (char*)((char*)actualCC + requiredBytes);
 
 	runtimeFlags = J9SHR_RUNTIMEFLAG_ENABLE_REDUCE_STORE_CONTENTION;
@@ -404,7 +404,7 @@ test4(J9JavaVM* vm)
  */
 #if 0
 	memset(actualCC, 0, requiredBytes);
-	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false);
+	actualCC = SH_CompositeCacheImpl::newInstance(vm, NULL, memForCC, "myRoot", false, false, 0);
 
 	runtimeFlags = J9SHR_RUNTIMEFLAG_ENABLE_REDUCE_STORE_CONTENTION;
 	if (actualCC->startup(vm->mainThread, &piconfig, cache, &runtimeFlags, 1, "myRoot", NULL, J9SH_DIRPERM_ABSENT, &cacheSize, &localCrashCntr, true, &cacheHasIntegrity) != 0) {
@@ -459,7 +459,7 @@ test5(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -510,7 +510,7 @@ test6(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -541,17 +541,11 @@ test7(J9JavaVM* vm)
 {
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	IDATA retval = TEST_PASS;
-#if !defined(J9SHR_CACHELET_SUPPORT)
 	SH_CompositeCacheImpl *testCC = NULL;
 	J9SharedClassPreinitConfig* piconfig = NULL;
-#endif
 
 	const char* testName = "test7";
 	j9tty_printf(PORTLIB, "%s: create composite cache with minaot size that reserves memory more than cache size \n", testName);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	retval = TEST_PASS;
-#else
 
 	if (!(piconfig = (J9SharedClassPreinitConfig*)j9mem_allocate_memory(sizeof(J9SharedClassPreinitConfig), J9MEM_CATEGORY_CLASSES))) {
 		ERRPRINTF(("Failed to allocate memory for piconfig.\n"));
@@ -568,7 +562,7 @@ test7(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -589,7 +583,7 @@ test7(J9JavaVM* vm)
 	done:
 	j9mem_free_memory(testCC);
 	j9mem_free_memory(piconfig);
-#endif
+
 	return retval;
 }
 
@@ -618,7 +612,7 @@ test8(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -648,16 +642,10 @@ test9(J9JavaVM* vm)
 {
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	IDATA retval = TEST_PASS;
-#if !defined(J9SHR_CACHELET_SUPPORT)
 	SH_CompositeCacheImpl *testCC = NULL;
 	J9SharedClassPreinitConfig* piconfig = NULL;
-#endif
 	const char* testName = "test9";
 	j9tty_printf(PORTLIB, "%s: create composite cache with minjit data size that reserves memory more than cache size \n", testName);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	retval = TEST_PASS;
-#else
 
 	if (!(piconfig = (J9SharedClassPreinitConfig*)j9mem_allocate_memory(sizeof(J9SharedClassPreinitConfig), J9MEM_CATEGORY_CLASSES))) {
 		ERRPRINTF(("Failed to allocate memory for piconfig.\n"));
@@ -674,7 +662,7 @@ test9(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -695,7 +683,7 @@ test9(J9JavaVM* vm)
 	done:
 	j9mem_free_memory(testCC);
 	j9mem_free_memory(piconfig);
-#endif
+
 	return retval;
 }
 
@@ -723,7 +711,7 @@ test10(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = MAIN_CACHE_SIZE;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -770,7 +758,7 @@ test11(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = -1;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -817,7 +805,7 @@ test12(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = MAIN_CACHE_SIZE+1024;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig);
+	ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig);
 	retval = createTestCompositeCache(vm, &testCC, piconfig, testName);
 
 	if (retval != TEST_PASS) {
@@ -866,7 +854,7 @@ test13(J9JavaVM* vm)
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
 
-	if(0 == ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig))
+	if(0 == ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig))
 	{
 		ERRPRINTF(("Failed to ensure correct sizes for minaot and maxaot.\n"));
 		retval = TEST_ERROR;
@@ -901,7 +889,7 @@ test14(J9JavaVM* vm)
 	piconfig->sharedClassMaxJITSize = MAIN_CACHE_SIZE-200;
 	piconfig->sharedClassDebugAreaBytes = -1;
 	piconfig->sharedClassSoftMaxBytes = -1;
-	if(0 == ensureCorrectCacheSizes(vm->portLibrary, 0, (UDATA)0, piconfig))
+	if(0 == ensureCorrectCacheSizes(vm, vm->portLibrary, 0, (UDATA)0, piconfig))
 	{
 		ERRPRINTF(("Failed to ensure correct sizes for minjit and maxjit.\n"));
 		retval = TEST_ERROR;

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9;
 
@@ -65,11 +65,9 @@ import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectMonitorPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9ObjectPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.J9VMThreadPointer;
 import com.ibm.j9ddr.vm29.pointer.generated.MM_GCExtensionsPointer;
-import com.ibm.j9ddr.vm29.pointer.generated.MM_MemorySpacePointer;
 import com.ibm.j9ddr.vm29.pointer.generated.MM_SublistPuddlePointer;
 import com.ibm.j9ddr.vm29.pointer.helper.J9ObjectHelper;
 import com.ibm.j9ddr.vm29.pointer.helper.J9RASHelper;
-import com.ibm.j9ddr.vm29.structure.J9Consts;
 import com.ibm.j9ddr.vm29.structure.J9MemorySegment;
 import com.ibm.j9ddr.vm29.structure.J9VMThread;
 import com.ibm.j9ddr.vm29.types.UDATA;
@@ -598,22 +596,10 @@ public abstract class RootScanner
 		while (vmThreadListIterator.hasNext()) {
 			J9VMThreadPointer walkThread = vmThreadListIterator.next();
 			
-			if (J9BuildFlags.thr_lockNursery) {
-				ObjectMonitorReferencePointer objectMonitorLookupCache = walkThread.objectMonitorLookupCacheEA();
-				for (long cacheIndex = 0; cacheIndex < J9VMThread.J9VMTHREAD_OBJECT_MONITOR_CACHE_SIZE; cacheIndex++) {
-					ObjectMonitorReferencePointer slotAddress = objectMonitorLookupCache.add(cacheIndex);
-					doMonitorLookupCacheSlot(slotAddress.at(0), slotAddress);
-				}
-			} else {
-				
-				/* Can't implement this because walkThread.cachedMonitor field does not exist as we've never had a vm29 spec yet with the condition: 
-				 * (!J9BuildFlags.thr_lockNursery && !J9BuildFlags.opt_realTimeLockingSupport)
-				 * 
-				 * // This cast is ugly but is technically what the c-code is doing 
-				 * ObjectMonitorReferencePointer cachedMonitorSlot = ObjectMonitorReferencePointer.cast(walkThread.cachedMonitorEA());
-				 * doMonitorLookupCacheSlot(walkThread.cachedMonitor(), cachedMonitorSlot);
-				 */
-				throw new UnsupportedOperationException("Not implemented");
+			ObjectMonitorReferencePointer objectMonitorLookupCache = walkThread.objectMonitorLookupCacheEA();
+			for (long cacheIndex = 0; cacheIndex < J9VMThread.J9VMTHREAD_OBJECT_MONITOR_CACHE_SIZE; cacheIndex++) {
+				ObjectMonitorReferencePointer slotAddress = objectMonitorLookupCache.add(cacheIndex);
+				doMonitorLookupCacheSlot(slotAddress.at(0), slotAddress);
 			}
 		}
 	}

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #if !defined(J9SC_STORE_TRANSACTION_HPP_INCLUDED)
@@ -80,6 +80,26 @@ public:
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Returns true if cache full is detected by the transaction object.
+	 *
+	 * Called after constructor/method is called to query if the cache if full.
+	 *
+	 */
+	bool isCacheFull()
+	{
+		return (0 != tobj.cacheFullFlags);
+	}
+
+	void updateUnstoredBytes(U_32 romClassSizeFullSize)
+	{
+		if (sharedapi != NULL) {
+			if (J9_ARE_ALL_BITS_SET(tobj.cacheFullFlags, J9SHR_RUNTIMEFLAG_AVAILABLE_SPACE_FULL)) {
+				sharedapi->classStoreTransaction_updateUnstoredBytes(romClassSizeFullSize, (void *) &tobj);
+			}
+		}
 	}
 
 	/**

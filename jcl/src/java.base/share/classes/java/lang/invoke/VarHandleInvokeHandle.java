@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar19-SE]*/
+/*[INCLUDE-IF Sidecar19-SE & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2016, 2016 IBM Corp. and others
+ * Copyright (c) 2016, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,12 +18,18 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
 import java.lang.invoke.VarHandle.AccessMode;
 
+/**
+ * Base class for VarHandleInvokers.
+ * 
+ * Invokers are the MethodHandle-subclasses required to implement
+ * the invokeExact and invoke MethodHandle combinators.
+ */
 @VMCONSTANTPOOL_CLASS
 abstract class VarHandleInvokeHandle extends PrimitiveHandle {
 	@VMCONSTANTPOOL_FIELD
@@ -32,9 +38,13 @@ abstract class VarHandleInvokeHandle extends PrimitiveHandle {
 	final MethodType accessModeType;
 
 	VarHandleInvokeHandle(AccessMode accessMode, MethodType accessModeType, byte kind) {
-		super(accessModeType.insertParameterTypes(0, VarHandle.class), null, null, kind, null);
+		/* Prepend a VarHandle receiver argument to match the how this MethodHandle will be invoked
+		 * Note: the modifiers are specific to the access mode methods in VarHandle.
+		 */
+		super(accessModeType.insertParameterTypes(0, VarHandle.class), VarHandle.class, accessMode.methodName(), kind, PUBLIC_FINAL_NATIVE, null);
 		this.operation = accessMode.ordinal();
-		this.accessModeType = accessModeType;
+		// Append a VarHandle argument to match the VarHandle's internal method signature
+		this.accessModeType = accessModeType.appendParameterTypes(VarHandle.class);
 	}
 
 	VarHandleInvokeHandle(VarHandleInvokeHandle originalHandle, MethodType newType) {
@@ -52,115 +62,6 @@ abstract class VarHandleInvokeHandle extends PrimitiveHandle {
 	@Override
 	protected final ThunkTuple computeThunks(Object arg) {
 		return thunkTable().get(new ThunkKey(ThunkKey.computeThunkableType(type(), 0, 1)));
-	}
-	// }}} JIT support
-}
-
-final class VarHandleInvokeExactHandle extends VarHandleInvokeHandle {
-	MethodType handleTableMHType;
-
-	VarHandleInvokeExactHandle(AccessMode accessMode, MethodType accessModeType) {
-		super(accessMode, accessModeType, KIND_VARHANDLEINVOKEEXACT);
-		handleTableMHType = null;
-	}
-
-	VarHandleInvokeExactHandle(VarHandleInvokeExactHandle originalHandle, MethodType newType) {
-		super(originalHandle, newType);
-		handleTableMHType = originalHandle.handleTableMHType;
-	}
-
-	@Override
-	MethodHandle cloneWithNewType(MethodType newType) {
-		return new VarHandleInvokeExactHandle(this, newType);
-	}
-
-	@Override
-	final void compareWith(MethodHandle right, Comparator c) {
-		if (right instanceof VarHandleInvokeExactHandle) {
-			((VarHandleInvokeExactHandle)right).compareWithVarHandleInvoke(this, c);
-		} else {
-			c.fail();
-		}
-	}
-
-	// {{{ JIT support
-	private static final ThunkTable _thunkTable = new ThunkTable();
-
-	@Override
-	protected final ThunkTable thunkTable() {
-		return _thunkTable;
-	}
-
-	@FrameIteratorSkip
-	private final int invokeExact_thunkArchetype_X(VarHandle varHandle, int argPlaceholder) {
-		MethodHandle next = varHandle.getFromHandleTable(operation);
-		if (ILGenMacros.isShareableThunk()) {
-			undoCustomizationLogic(next);
-		}
-		if (!ILGenMacros.isCustomThunk()) {
-			doCustomizationLogic();
-		}
-
-		/* For a fixed access mode, the MethodHandle from the handle table will
-		 * have different types for different subclasses of VarHandle, even when
-		 * excluding the last argument whose type is one of the subclasses of VarHandle.
-		 */
-		MethodType nextType = (null == handleTableMHType) ?
-				accessModeType.appendParameterTypes(varHandle.getClass()) : handleTableMHType;
-		ILGenMacros.typeCheck(next, nextType);
-		if (null == handleTableMHType) {
-			handleTableMHType = nextType;
-		}
-		return ILGenMacros.invokeExact_X(next, ILGenMacros.placeholder(argPlaceholder, varHandle));
-	}
-	// }}} JIT support
-}
-
-final class VarHandleInvokeGenericHandle extends VarHandleInvokeHandle {
-	final MethodType handleTableMHType;
-
-	VarHandleInvokeGenericHandle(AccessMode accessMode, MethodType accessModeType) {
-		super(accessMode, accessModeType, KIND_VARHANDLEINVOKEGENERIC);
-		handleTableMHType = accessModeType.appendParameterTypes(VarHandle.class);
-	}
-
-	VarHandleInvokeGenericHandle(VarHandleInvokeGenericHandle originalHandle, MethodType newType) {
-		super(originalHandle, newType);
-		handleTableMHType = originalHandle.handleTableMHType;
-	}
-
-	@Override
-	MethodHandle cloneWithNewType(MethodType newType) {
-		return new VarHandleInvokeGenericHandle(this, newType);
-	}
-
-	@Override
-	final void compareWith(MethodHandle right, Comparator c) {
-		if (right instanceof VarHandleInvokeGenericHandle) {
-			((VarHandleInvokeGenericHandle)right).compareWithVarHandleInvoke(this, c);
-		} else {
-			c.fail();
-		}
-	}
-
-	// {{{ JIT support
-	private static final ThunkTable _thunkTable = new ThunkTable();
-
-	@Override
-	protected final ThunkTable thunkTable() {
-		return _thunkTable;
-	}
-
-	@FrameIteratorSkip
-	private final int invokeExact_thunkArchetype_X(VarHandle varHandle, int argPlaceholder) {
-		MethodHandle next = varHandle.getFromHandleTable(operation);
-		if (ILGenMacros.isShareableThunk()) {
-			undoCustomizationLogic(next);
-		}
-		if (!ILGenMacros.isCustomThunk()) {
-			doCustomizationLogic();
-		}
-		return ILGenMacros.invokeExact_X(next.asType(handleTableMHType), ILGenMacros.placeholder(argPlaceholder, varHandle));
 	}
 	// }}} JIT support
 }

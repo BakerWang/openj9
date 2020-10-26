@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 extern "C"
@@ -31,23 +31,6 @@ extern "C"
 
 #define TEST_PASS 0
 #define TEST_ERROR -1
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-IDATA
-testSCStringTransaction(J9JavaVM* vm)
-{
-	char * testName = "testSCStringTransaction";
-	if (vm == NULL) {
-		/*vm is null*/
-		return TEST_ERROR;
-	}
-	PORT_ACCESS_FROM_JAVAVM(vm);
-
-	/*Note: we do this b/c test fails on realtime currently unless there is an existing cache*/
-	j9tty_printf(PORTLIB, "Skip these tests on realtime b/c cache is readonly\n", testName);
-	return TEST_PASS;
-}
-#else
 
 static IDATA test1(J9JavaVM* vm);
 static IDATA test2(J9JavaVM* vm);
@@ -75,11 +58,11 @@ testSCStringTransaction(J9JavaVM* vm)
 		return TEST_ERROR;
 	}
 
-	vm->internalVMFunctions->internalAcquireVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(vm->mainThread);
 	rc |= test1(vm);
 	rc |= test2(vm);
 	rc |= test3(vm);
-	vm->internalVMFunctions->internalReleaseVMAccess(vm->mainThread);
+	vm->internalVMFunctions->internalExitVMToJNI(vm->mainThread);
 
 
 	j9tty_printf(PORTLIB, "%s: %s\n", testName, TEST_PASS==rc?"PASS":"FAIL");
@@ -175,5 +158,3 @@ test3(J9JavaVM* vm)
 	vm->mainThread->javaVM->sharedClassConfig->runtimeFlags &= ~J9SHR_RUNTIMEFLAG_BLOCK_SPACE_FULL;
 	return retval;
 }
-
-#endif /*defined(J9SHR_CACHELET_SUPPORT)*/

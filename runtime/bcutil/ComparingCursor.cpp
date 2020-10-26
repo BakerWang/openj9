@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 /*
  * ComparingCursor.cpp
@@ -33,11 +33,13 @@
 #include "bcnames.h"
 #include "pcstack.h"
 #include "rommeth.h"
+#include "vrfytbl.h"
+#include "bytecodewalk.h"
 
 
 ComparingCursor::ComparingCursor(J9JavaVM *javaVM, SRPOffsetTable *srpOffsetTable,
 		SRPKeyProducer *srpKeyProducer, ClassFileOracle *classFileOracle, U_8 *romClass, 
-		bool romClassIsShared, ROMClassCreationContext * context) :
+		bool romClassIsShared, ROMClassCreationContext * context, bool isComparingLambdaFromSCC) :
 	Cursor(0, srpOffsetTable, context),
 	_javaVM(javaVM),
 	_checkRangeInSharedCache(romClassIsShared),
@@ -50,7 +52,8 @@ ComparingCursor::ComparingCursor(J9JavaVM *javaVM, SRPOffsetTable *srpOffsetTabl
 	_mainHelper(srpOffsetTable, romClass, context),
 	_lineNumberHelper(srpOffsetTable, romClass, context),
 	_varInfoHelper(srpOffsetTable, romClass, context),
-	_isEqual(true)
+	_isEqual(true),
+	_isComparingLambdaFromSCC(isComparingLambdaFromSCC)
 {
 	if (!_checkRangeInSharedCache && (NULL != javaVM)) {
 		/* Enter mutex in order to safely iterate over the segments in getMaximumValidLengthForPtrInSegment(). */
@@ -107,7 +110,7 @@ ComparingCursor::writeU32(U_32 u32Value, DataType dataType)
 	ComparingCursorHelper * countingcursor = getCountingCursor(dataType);
 	if ( shouldCheckForEquality(dataType, u32Value) ) {
 		U_32 * tmpu32 = (U_32 *)(countingcursor->getBaseAddress() + countingcursor->getCount());
-		if ( !isRangeValid(sizeof(U_32), dataType) || (u32Value != *tmpu32) ) {
+		if (!isRangeValid(sizeof(U_32), dataType) || (u32Value != *tmpu32)) {
 			markUnEqual();
 		}
 	}
@@ -196,6 +199,7 @@ ComparingCursor::writeSRP(UDATA srpKey, DataType dataType)
 			}
 			case Cursor::LOCAL_VARIABLE_DATA_SRP_TO_UTF8:
 			case Cursor::OPTINFO_SOURCE_FILE_NAME:
+			case Cursor::SRP_TO_UTF8_CLASS_NAME:
 			case Cursor::SRP_TO_UTF8: {
 				/* test that the UTF8's are identical */
 				J9UTF8 * utf8 = SRP_PTR_GET(currentAddr, J9UTF8 *);
@@ -324,7 +328,7 @@ ComparingCursor::writeData(U_8* bytes, UDATA length, DataType dataType)
 					/* Check if the bytecode matches with a special case for JBgenericReturn. */
 					if (instruction != romInstruction) {
 						if ((JBgenericReturn != instruction) ||
-							(((romInstruction < JBreturn0) || (JBsyncReturn2 < romInstruction)) && (JBreturnFromConstructor != romInstruction))
+							(RTV_RETURN != (J9JavaBytecodeVerificationTable[romInstruction] >> 8))
 						) {
 							markUnEqual();
 							break;
@@ -415,8 +419,21 @@ ComparingCursor::shouldCheckForEquality(DataType dataType, U_32 u32Value)
 	}
 
 	switch (dataType) {
+	case SRP_TO_UTF8_CLASS_NAME:
+		if (isComparingLambdaFromSCC()) {
+			/* if the class is a lambda class don't compare the class names because lambda classes might have different index numbers from run to run */
+			return false;
+		}
+		break;
 	case BYTECODE: /* fall through */
 	case GENERIC: /* fall through */
+	case CLASS_FILE_SIZE: /* fall through */
+		if ((CLASS_FILE_SIZE == dataType) 
+			&& isComparingLambdaFromSCC()
+		) {
+			/* If comparing a lambda class from the shared cache, class file size comparison is already done in ROMClassBuilder::compareROMClassForEquality().  */
+			return false;
+		}
 	case SRP_TO_DEBUG_DATA: /* fall through */
 	case SRP_TO_GENERIC: /* fall through */
 	case SRP_TO_UTF8: /* fall through */
@@ -524,12 +541,11 @@ ComparingCursor::isRangeValidForUTF8Ptr(J9UTF8 *utf8)
 	U_8 *ptr = (U_8*)utf8;
 
 	if (_checkRangeInSharedCache) {
-		return j9shr_Query_IsAddressInCache(_javaVM, utf8, sizeof(J9UTF8)) &&
-			   j9shr_Query_IsAddressInCache(_javaVM, ptr + offsetof(J9UTF8, data), J9UTF8_LENGTH(utf8));
+		return FALSE != j9shr_Query_IsAddressInCache(_javaVM, utf8, J9UTF8_TOTAL_SIZE(utf8));
 	} else {
 		UDATA maxLength = getMaximumValidLengthForPtrInSegment(ptr);
 
-		return (sizeof(J9UTF8) < maxLength) && (J9UTF8_LENGTH(utf8) < (maxLength - offsetof(J9UTF8, data)));
+		return J9UTF8_TOTAL_SIZE(utf8) < maxLength;
 	}
 }
 

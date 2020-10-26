@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2002, 2017 IBM Corp. and others
+ * Copyright (c) 2002, 2018 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef j9vm_internal_h
@@ -36,7 +36,7 @@
 #define JVM_DEFAULT_ERROR_BUFFER_SIZE 256
 #endif /* WIN32 */
 
-#ifdef LINUX
+#if defined(LINUX)
 #if !defined(_GNU_SOURCE)
 /* defining _GNU_SOURCE allows the use of dladdr() in dlfcn.h */
 #define _GNU_SOURCE
@@ -56,26 +56,28 @@
 #define LAUNCHERS
 #include "jvm.h"
 
-#ifdef J9UNIX
+#if defined(J9UNIX)
 #include <sys/socket.h>
 #include <dlfcn.h>
 #include <sys/ioctl.h>
 #include <setjmp.h>
 #include <sys/time.h>
-#ifdef J9ZTPF
+
+/* On OSX, fstat64 is deprecated. So, fstat is used on OSX. */
+#if defined(J9ZTPF) || defined(OSX)
 #define J9FSTAT fstat
-#else /* defined(J9ZTPF) */
+#else /* defined(J9ZTPF) || defined(OSX) */
 #define J9FSTAT fstat64
-#endif /* !defined(J9ZTPF) */
-#endif /* J9UNIX */
+#endif /* defined(J9ZTPF) || defined(OSX) */
+#endif /* defined(J9UNIX) */
 
 
 /* required for poll support on some Unix platforms (called in JVM_Available) */
-#if defined(LINUX) || defined(AIXPPC) || defined(J9ZOS390)
+#if defined(LINUX) || defined(OSX) || defined(AIXPPC) || defined(J9ZOS390)
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#if defined(LINUX)
+#if defined(LINUX) || defined(OSX)
 #include <poll.h>
 #elif defined(AIXPPC)
 #include <sys/poll.h>

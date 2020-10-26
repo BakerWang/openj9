@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef jvmtiInternal_h
@@ -37,19 +37,13 @@
 
 typedef enum { 
 	J9JVMTI_BEFORE_FIRST_EXTENSION_EVENT = J9JVMTI_HIGHEST_EVENT,
-	J9JVMTI_EVENT_COM_IBM_METHOD_ENTRY_EXTENDED,
-#if defined (J9VM_INTERP_NATIVE_SUPPORT)
 	J9JVMTI_EVENT_COM_IBM_COMPILING_START,
 	J9JVMTI_EVENT_COM_IBM_COMPILING_END,
-#endif
 	J9JVMTI_EVENT_COM_IBM_INSTRUMENTABLE_OBJECT_ALLOC,
 	J9JVMTI_EVENT_COM_IBM_VM_DUMP_START,
 	J9JVMTI_EVENT_COM_IBM_VM_DUMP_END,
-	J9JVMTI_EVENT_ASYNC,
-	J9JVMTI_EVENT_COM_IBM_METHOD_EXIT_NO_RC,
 	J9JVMTI_EVENT_COM_IBM_GARBAGE_COLLECTION_CYCLE_START,
 	J9JVMTI_EVENT_COM_IBM_GARBAGE_COLLECTION_CYCLE_FINISH,
-	J9JVMTI_EVENT_COM_IBM_ARRAY_CLASS_LOAD,
 	J9JVMTI_AFTER_LAST_EXTENSION_EVENT
 } J9JVMTIExtensionEvent;
 
@@ -97,13 +91,22 @@ typedef struct J9JVMTIObjectTag {
 	jlong tag;
 } J9JVMTIObjectTag;
 
-#define J9JVMTI_WATCH_FIELD_ACCESS 1
-#define J9JVMTI_WATCH_FIELD_MODIFICATION 2
+#define J9JVMTI_WATCHED_FIELD_BITS_PER_FIELD 2
+#define J9JVMTI_WATCHED_FIELDS_PER_UDATA \
+	((sizeof(UDATA) * 8) / J9JVMTI_WATCHED_FIELD_BITS_PER_FIELD)
+#define J9JVMTI_CLASS_REQUIRES_ALLOCATED_J9JVMTI_WATCHED_FIELD_ACCESS_BITS(clazz) \
+	((clazz)->romClass->romFieldCount > J9JVMTI_WATCHED_FIELDS_PER_UDATA)
+#define J9JVMTI_WATCHED_FIELD_ARRAY_INDEX(index) \
+	((index) / J9JVMTI_WATCHED_FIELDS_PER_UDATA)
+#define J9JVMTI_WATCHED_FIELD_ACCESS_BIT(index) \
+	((UDATA)1 << (((index) % J9JVMTI_WATCHED_FIELDS_PER_UDATA) * J9JVMTI_WATCHED_FIELD_BITS_PER_FIELD))
+#define J9JVMTI_WATCHED_FIELD_MODIFICATION_BIT(index) \
+	(J9JVMTI_WATCHED_FIELD_ACCESS_BIT(index) << 1)
 
-typedef struct J9JVMTIWatchedField {
-	UDATA flags;
-	jfieldID fieldID;
-} J9JVMTIWatchedField;
+typedef struct J9JVMTIWatchedClass {
+	J9Class *clazz;
+	UDATA *watchBits;
+} J9JVMTIWatchedClass;
 
 typedef struct J9JVMTIBreakpointedMethod {
 	UDATA referenceCount;
@@ -151,17 +154,15 @@ typedef struct J9JVMTIEnv {
 	omrthread_monitor_t mutex;
 	void* environmentLocalStorage;
 	jvmtiCapabilities capabilities;
-	jvmtiCapabilities capabilitiesMask;
 	jvmtiEventCallbacks callbacks;
 	J9JVMTIExtensionCallbacks extensionCallbacks;
 	omrthread_monitor_t threadDataPoolMutex;
 	J9Pool* threadDataPool;
 	J9HashTable* objectTagTable;
 	J9JVMTIEventEnableMap globalEventEnable;
-	J9Pool* watchedFieldPool;
+	J9HashTable *watchedClasses;
 	J9Pool* breakpoints;
 	omrthread_tls_key_t tlsKey;
-	IDATA handlerKey;
 	J9JVMTIHookInterfaceWithID vmHook;
 	J9JVMTIHookInterfaceWithID gcHook;
 	J9JVMTIHookInterfaceWithID gcOmrHook;
@@ -173,10 +174,9 @@ typedef struct J9JVMTIEnv {
 } J9JVMTIEnv;
 
 #define J9JVMTIENV_FLAG_DISPOSED 1
-#define J9JVMTIENV_FLAG_SELECTIVE_NOTIFY_ENTRY_EXIT 2
+#define J9JVMTIENV_FLAG_UNUSED_2 2
 #define J9JVMTIENV_FLAG_CLASS_LOAD_HOOK_EVER_ENABLED 4
 #define J9JVMTIENV_FLAG_RETRANSFORM_CAPABLE 8
-#define J9JVMTIENV_FLAG_AUTOTAG_OBJECTS 16
 
 
 typedef struct J9JVMTIData {
@@ -211,7 +211,7 @@ typedef struct J9JVMTIData {
  */ 
 #define J9JVMTI_FLAG_REDEFINE_CLASS_EXTENSIONS_ENABLED 1   /** Class Redefinition Extensions are enabled */
 #define J9JVMTI_FLAG_REDEFINE_CLASS_EXTENSIONS_USED    2   /** Class Redefinition Extensions have been actually used. Set (and remains set) the first time a redefined class with extensions has been used */
-#define J9JVMTI_FLAG_NON_SELECTIVE_METHOD_ENTRY_EXIT   4   /** Set when a JVMTI agent requests and obtains non-selective method entry or exit event notification  */
+#define J9JVMTI_FLAG_SAMPLED_OBJECT_ALLOC_ENABLED      4   /** Sampling Object Allocation is enabled */
 
 #define J9JVMTI_COMPILE_EVENT_THREAD_STATE_NEW 0
 #define J9JVMTI_COMPILE_EVENT_THREAD_STATE_ALIVE 1
@@ -295,7 +295,7 @@ typedef struct jvmtiGcp_translationEntry {
  
 typedef struct jvmtiGcp_translation {
 	J9HashTable			*ht;	/*!< A HashTable of reindexed constant pool items contained in jvmtiGcp_translationEntry entries */
-	jvmtiGcp_translationEntry	**cp;	/*!< An array of J9HashTable nodes indexed by the translated SUN constant pool indeces */
+	jvmtiGcp_translationEntry	**cp;	/*!< An array of J9HashTable nodes indexed by the translated SUN constant pool indices */
 	J9ROMConstantPoolItem 		*romConstantPool;	/*!< J9RomClass constant pool for the class under translation */
 	U_32				cpSize;		/*!< Number of translated constant pool items */
 	U_32				totalSize;	/*!< Total number of bytes required for writing the translated constant pool */
@@ -336,9 +336,6 @@ typedef struct jvmtiGcp_translation {
 		Trc_JVMTI_##func##_Exit(rc, param, param2, param3, param4); \
 		return rc; \
 	} while(0)
-
-#define AUTOTAGGING_OBJECTS(env) (((J9JVMTIEnv *) (env))->flags & J9JVMTIENV_FLAG_AUTOTAG_OBJECTS)
-#define OBJECT_IS_TAGGABLE(env, vm, object) ( !AUTOTAGGING_OBJECTS((env)) || J9VM_IS_INITIALIZED_HEAPCLASS_VM((vm), (object)) )
 
 /*
  * True if the given JLClass instance is a JLClass instance but is not fully initialized.
@@ -548,22 +545,33 @@ typedef struct jvmtiGcp_translation {
 #define IBMJVMTI_EXTENDED_CALLSTACK     1
 #define IBMJVMTI_UNEXTENDED_CALLSTACK   0
 
+/* The brace mismatches in the macros below are due to the usage pattern:
+ *
+ * JVMTI_ENVIRONMENTS_DO(jvmtiData, j9env) {
+ * 		...use j9env...
+ * 		JVMTI_ENVIRONMENTS_NEXT_DO(jvmtiData, j9env);
+ * }
+ *
+ */
+
 #define JVMTI_ENVIRONMENTS_DO(jvmtiData, j9env) \
 	(j9env) = (jvmtiData)->environmentsHead; \
-	while (((j9env) != NULL) && (0 == ((j9env)->flags & J9JVMTIENV_FLAG_DISPOSED)))
+	while ((j9env) != NULL) { \
+		if (0 == ((j9env)->flags & J9JVMTIENV_FLAG_DISPOSED))
 
 #define JVMTI_ENVIRONMENTS_NEXT_DO(jvmtiData, j9env) \
-	(j9env) = (j9env)->linkNext
+		} \
+		(j9env) = (j9env)->linkNext
 	
 #define JVMTI_ENVIRONMENTS_REVERSE_DO(jvmtiData, j9env) \
 	(j9env) = (jvmtiData)->environmentsTail; \
-	while (((j9env) != NULL) && (0 == ((j9env)->flags & J9JVMTIENV_FLAG_DISPOSED)))
+	while ((j9env) != NULL) { \
+		if (0 == ((j9env)->flags & J9JVMTIENV_FLAG_DISPOSED))
 
 #define JVMTI_ENVIRONMENTS_REVERSE_NEXT_DO(jvmtiData, j9env) \
-	(j9env) = (j9env)->linkPrevious
-	
+		} \
+		(j9env) = (j9env)->linkPrevious
+
 #define PORT_ACCESS_FROM_JVMTI(env) PORT_ACCESS_FROM_JAVAVM(((J9JVMTIEnv *) (env))->vm)
 
 #endif     /* jvmtiInternal_h */
-
-

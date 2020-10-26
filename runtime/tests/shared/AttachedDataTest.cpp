@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2016 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 extern "C"
 {
@@ -147,13 +147,13 @@ AttachedDataTest::addMethodToCache(J9JavaVM *vm)
 
 	sizes.romClassSizeFullSize = romclassSize;
 	sizes.romClassMinimalSize = sizes.romClassSizeFullSize;
-	
+
 	if (transaction.allocateSharedClass((const J9RomClassRequirements *)&sizes) == false) {
 		ERRPRINTF("failure to alloc memory for ROMClass in shared cache\n");
 		return NULL;
 	} else {
 		romclassmem = transaction.getRomClass();
- 	}
+	}
 
 	if (romclassmem == NULL) {
 		ERRPRINTF(("romclassmem == NULL\n"));
@@ -163,10 +163,10 @@ AttachedDataTest::addMethodToCache(J9JavaVM *vm)
 	memcpy(newromclass,romclass,romclassSize);
 	romMethod = J9ROMCLASS_ROMMETHODS(newromclass);
 
-    if (transaction.updateSharedClassSize(newromclass->romSize) == -1) {
-    	ERRPRINTF(("failed to update shared class size\n"));
-    	return NULL;
-    }
+	if (transaction.updateSharedClassSize(newromclass->romSize) == -1) {
+		ERRPRINTF(("failed to update shared class size\n"));
+		return NULL;
+	}
 
 	return (romMethod);
  }
@@ -185,14 +185,14 @@ AttachedDataTest::openTestCache(J9JavaVM* vm, BlockPtr preallocatedCache, UDATA 
 
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-    classMemorySegments = vm->internalVMFunctions->allocateMemorySegmentListWithFlags(vm, 10, MEMORY_SEGMENT_LIST_FLAG_SORT, J9MEM_CATEGORY_CLASSES);
-    if (classMemorySegments == NULL) {
-            ERRPRINTF("openTestCache: failed to allocate memory segment list");
-            rc = FAIL;
-            goto done;
-    }
-    origClassMemorySegments = vm->classMemorySegments;
-    vm->classMemorySegments = classMemorySegments;
+	classMemorySegments = vm->internalVMFunctions->allocateMemorySegmentListWithFlags(vm, 10, MEMORY_SEGMENT_LIST_FLAG_SORT, J9MEM_CATEGORY_CLASSES);
+	if (classMemorySegments == NULL) {
+			ERRPRINTF("openTestCache: failed to allocate memory segment list");
+			rc = FAIL;
+			goto done;
+	}
+	origClassMemorySegments = vm->classMemorySegments;
+	vm->classMemorySegments = classMemorySegments;
 
 	piConfig = (J9SharedClassPreinitConfig *) j9mem_allocate_memory(sizeof(J9SharedClassPreinitConfig), J9MEM_CATEGORY_CLASSES);
 	if (NULL == piConfig) {
@@ -234,6 +234,7 @@ AttachedDataTest::openTestCache(J9JavaVM* vm, BlockPtr preallocatedCache, UDATA 
 
 	sharedClassConfig->cacheDescriptorList = (J9SharedClassCacheDescriptor*)((UDATA)sharedClassConfig + sizeof(J9SharedClassConfig));
 	sharedClassConfig->cacheDescriptorList->next = sharedClassConfig->cacheDescriptorList;
+	sharedClassConfig->cacheDescriptorList->previous = sharedClassConfig->cacheDescriptorList;
 
 	sharedClassConfig->softMaxBytes = -1;
 	sharedClassConfig->minAOT = -1;
@@ -246,7 +247,6 @@ AttachedDataTest::openTestCache(J9JavaVM* vm, BlockPtr preallocatedCache, UDATA 
 	sharedClassConfig->runtimeFlags |= (extraRunTimeFlag);
 
 	sharedClassConfig->verboseFlags |= (J9SHR_VERBOSEFLAG_ENABLE_VERBOSE_JITDATA | J9SHR_VERBOSEFLAG_ENABLE_VERBOSE_DEFAULT);
-
 
 	/* populate AttachedData APIs */
 	sharedClassConfig->storeAttachedData = j9shr_storeAttachedData;
@@ -286,7 +286,7 @@ AttachedDataTest::openTestCache(J9JavaVM* vm, BlockPtr preallocatedCache, UDATA 
 	}
 	UnitTest::cacheMemory = cacheMemory;
 	UnitTest::cacheSize = (U_32)piConfig->sharedClassCacheSize;
-	
+
 	cacheMapSize = SH_CacheMap::getRequiredConstrBytes(false);
 	memory = j9mem_allocate_memory(cacheMapSize, J9MEM_CATEGORY_CLASSES);
 	if (NULL == memory) {
@@ -335,11 +335,11 @@ done:
 			cacheAllocated = NULL;
 			cacheMemory = NULL;
 		}
-        if (NULL != classMemorySegments) {
-        	vm->internalVMFunctions->freeMemorySegmentList(vm, classMemorySegments);
-            vm->classMemorySegments = origClassMemorySegments;
-            classMemorySegments = NULL;
-        }
+		if (NULL != classMemorySegments) {
+			vm->internalVMFunctions->freeMemorySegmentList(vm, classMemorySegments);
+			vm->classMemorySegments = origClassMemorySegments;
+			classMemorySegments = NULL;
+		}
 	}
 	return rc;
 }
@@ -358,11 +358,13 @@ AttachedDataTest::closeTestCache(J9JavaVM *vm, bool freeCache)
 		cacheMap = NULL;
 	}
 
-	if ((true == freeCache) && (NULL != cacheAllocated)) {
-		/* Unprotect the cacheMemory before freeing. Otherwise it can cause crash on linux/ppc 64-bit machine when 
+	if (freeCache && (NULL != cacheAllocated)) {
+		/* Unprotect the cacheMemory before freeing. Otherwise it can cause crash on linux/ppc 64-bit machine when
 		 * the next call to allocate memory for cache returns same address as current cacheMemory.
 		 */
-		j9mmap_protect(cacheMemory, piConfig->sharedClassCacheSize, (J9PORT_PAGE_PROTECT_READ | J9PORT_PAGE_PROTECT_WRITE));
+		if (NULL != piConfig) {
+			j9mmap_protect(cacheMemory, piConfig->sharedClassCacheSize, (J9PORT_PAGE_PROTECT_READ | J9PORT_PAGE_PROTECT_WRITE));
+		}
 		j9mem_free_memory(cacheAllocated);
 		cacheAllocated = NULL;
 		cacheMemory = NULL;
@@ -378,11 +380,11 @@ AttachedDataTest::closeTestCache(J9JavaVM *vm, bool freeCache)
 		j9mem_free_memory(piConfig);
 		piConfig = NULL;
 	}
-    if (NULL != classMemorySegments) {
-    	vm->internalVMFunctions->freeMemorySegmentList(vm, classMemorySegments);
-        vm->classMemorySegments = origClassMemorySegments;
-        classMemorySegments = NULL;
-    }
+	if (NULL != classMemorySegments) {
+		vm->internalVMFunctions->freeMemorySegmentList(vm, classMemorySegments);
+		vm->classMemorySegments = origClassMemorySegments;
+		classMemorySegments = NULL;
+	}
 	return rc;
 }
 
@@ -469,16 +471,8 @@ AttachedDataTest::StoreAttachedDataSuccess(J9JavaVM *vm)
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	for (i = 0; i < NUM_DATA_OBJECTS; i++) {
 		rV = (UDATA) vm->sharedClassConfig->storeAttachedData(currentThread, dataList[i].keyAddress, &dataList[i].data, false);
-#if defined(J9SHR_CACHELET_SUPPORT)
-		if (J9SHR_RESOURCE_STORE_ERROR != rV) {
-			ERRPRINTF2("j9shr_storeAttachedData returned incorrect error code for realtime cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rV);
-			rc = FAIL;
-		} else {
-			INFOPRINTF("j9shr_storeAttachedData returned correct error code for realtime cache");
-			rc = PASS;
-		}
-#else
-		if (true == readOnlyCache) {
+
+		if (readOnlyCache) {
 			if (J9SHR_RESOURCE_STORE_ERROR != rV) {
 				ERRPRINTF2("j9shr_storeAttachedData returned incorrect code for read only cache, rV: %d for data index: %d\n", rV, i);
 				rc = FAIL;
@@ -502,7 +496,7 @@ AttachedDataTest::StoreAttachedDataSuccess(J9JavaVM *vm)
 				break;
 			}
 		}
-#endif
+
 		if (FAIL == rc) {
 			break;
 		}
@@ -525,10 +519,6 @@ AttachedDataTest::StoreAttachedDataFailure(J9JavaVM *vm)
 
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
-
 	cacheMap = (SH_CacheMap *)vm->sharedClassConfig->sharedClassCache;
 	cc = (SH_CompositeCacheImpl *)cacheMap->getCompositeCacheAPI();
 	ca = cc->getCacheHeaderAddress();
@@ -546,7 +536,7 @@ AttachedDataTest::StoreAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.flags = J9SHR_ATTACHED_DATA_NO_FLAGS;
 
 	UDATA rv = vm->sharedClassConfig->storeAttachedData(currentThread, attachedData.keyAddress, &attachedData.data, false);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rv) {
 			ERRPRINTF2("j9shr_storeAttachedData did not return correct error code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rv);
 			rc = FAIL;
@@ -566,9 +556,9 @@ AttachedDataTest::StoreAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.length = strlen(junkData)+1;
 	attachedData.data.type = J9SHR_ATTACHED_DATA_TYPE_JITPROFILE;
 	attachedData.data.flags = J9SHR_ATTACHED_DATA_NO_FLAGS;
- 	j9tty_printf(PORTLIB, "\t");
+	j9tty_printf(PORTLIB, "\t");
 	rv = vm->sharedClassConfig->storeAttachedData(currentThread, attachedData.keyAddress, &attachedData.data, false);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rv) {
 			ERRPRINTF2("j9shr_storeAttachedData did not return correct error code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rv);
 			rc = FAIL;
@@ -592,7 +582,7 @@ AttachedDataTest::StoreAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.flags = J9SHR_ATTACHED_DATA_NO_FLAGS;
 
 	rv = vm->sharedClassConfig->storeAttachedData(currentThread, attachedData.keyAddress, &attachedData.data, false);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rv) {
 			ERRPRINTF2("j9shr_storeAttachedData did not return correct error code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rv);
 			rc = FAIL;
@@ -614,7 +604,7 @@ AttachedDataTest::StoreAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.flags = J9SHR_ATTACHED_DATA_NO_FLAGS + 100;
 
 	rv = vm->sharedClassConfig->storeAttachedData(currentThread, attachedData.keyAddress, &attachedData.data, false);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rv) {
 			ERRPRINTF2("j9shr_storeAttachedData did not return correct error code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rv);
 			rc = FAIL;
@@ -649,15 +639,7 @@ AttachedDataTest::FindAttachedData(J9JavaVM *vm, const void *addressInCache, J9S
 	data.type = expectedData->type;
 
 	rc = (IDATA) vm->sharedClassConfig->findAttachedData(currentThread, addressInCache, &data, &corruptOffset);
-#if defined(J9SHR_CACHELET_SUPPORT)
-	if (J9SHR_RESOURCE_STORE_ERROR != rc) {
-		ERRPRINTF2("FindAttachedData: j9shr_findAttachedData returned incorrect error code for realtime cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
-		rc = FAIL;
-	} else {
-		INFOPRINTF("FindAttachedData: j9shr_findAttachedData returned correct error code for realtime cache");
-		rc = PASS;
-	}
-#else
+
 	switch(rc) {
 	case J9SHR_RESOURCE_PARAMETER_ERROR:
 	case J9SHR_RESOURCE_STORE_ERROR:
@@ -665,7 +647,7 @@ AttachedDataTest::FindAttachedData(J9JavaVM *vm, const void *addressInCache, J9S
 		rc = FAIL;
 		break;
 	default:
-		if (true == expectCorruptData) {
+		if (expectCorruptData) {
 			if (-1 != corruptOffset) {
 				if (NULL != (U_8 *)rc) {
 					ERRPRINTF1("%s: j9shr_findAttachedData successfully found corrupt data but did not return NULL", caller);
@@ -713,7 +695,7 @@ AttachedDataTest::FindAttachedData(J9JavaVM *vm, const void *addressInCache, J9S
 		}
 		break;
 	}
-#endif
+
 	return rc;
 }
 
@@ -747,10 +729,6 @@ AttachedDataTest::FindAttachedDataFailure(J9JavaVM *vm)
 	SharedAttachedData attachedData;
 	const char *testName = "FindAttachedDataFailure";
 	PORT_ACCESS_FROM_JAVAVM(vm);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	memset(&attachedData, 0, sizeof(SharedAttachedData));
@@ -827,10 +805,6 @@ AttachedDataTest::FindAttachedDataUpdateCountFailure(J9JavaVM *vm)
 	const char *testName = "FindAttachedDataUpdateCountFailure";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
-
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	memset(&attachedData, 0, sizeof(SharedAttachedData));
 
@@ -861,10 +835,6 @@ AttachedDataTest::FindAttachedDataCorruptCountFailure(J9JavaVM *vm)
 	SharedAttachedData attachedData;
 	const char *testName = "FindAttachedDataCorruptCountFailure";
 	PORT_ACCESS_FROM_JAVAVM(vm);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	memset(&attachedData, 0, sizeof(SharedAttachedData));
@@ -904,10 +874,6 @@ AttachedDataTest::ReplaceAttachedData(J9JavaVM *vm)
 	const char *testName = "ReplaceAttachedData";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
-
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	memset(&attachedData, 0, sizeof(SharedAttachedData));
 
@@ -928,7 +894,7 @@ AttachedDataTest::ReplaceAttachedData(J9JavaVM *vm)
 
 	/* pass true to forceReplace parameter of j9shr_storeAttachedData */
 	rc = (IDATA) vm->sharedClassConfig->storeAttachedData(currentThread, attachedData.keyAddress, &attachedData.data, true);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF2("j9shr_storeAttachedData returned incorrect code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
 			rc = FAIL;
@@ -1005,16 +971,8 @@ AttachedDataTest::UpdateAttachedDataSuccess(J9JavaVM *vm)
 	attachedData.data.flags = dataList[1].data.flags;
 
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedData(currentThread, attachedData.keyAddress, updateOffset, &attachedData.data);
-#if defined(J9SHR_CACHELET_SUPPORT)
-	if (J9SHR_RESOURCE_STORE_ERROR != rc) {
-		ERRPRINTF2("j9shr_updateAttachedData returned incorrect code for realtime cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
-		rc = FAIL;
-	} else {
-		INFOPRINTF("j9shr_updateAttachedData returned correct code for realtime cache");
-		rc = PASS;
-	}
-#else
-	if (true == readOnlyCache) {
+
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF2("j9shr_updateAttachedData returned incorrect code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
 			rc = FAIL;
@@ -1045,7 +1003,6 @@ AttachedDataTest::UpdateAttachedDataSuccess(J9JavaVM *vm)
 			ERRPRINTF("failed to find updated data");
 		}
 	}
-#endif
 
 _exit:
 	if (NULL != updateData) {
@@ -1090,16 +1047,8 @@ AttachedDataTest::UpdateJitHint(J9JavaVM *vm)
 	attachedData.data.flags = dataList[JIT_HINT_OBJECT_BASE].data.flags;
 
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedData(currentThread, attachedData.keyAddress, updateOffset, &attachedData.data);
-#if defined(J9SHR_CACHELET_SUPPORT)
-	if (J9SHR_RESOURCE_STORE_ERROR != rc) {
-		ERRPRINTF2("j9shr_updateAttachedData returned incorrect code for realtime cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
-		rc = FAIL;
-	} else {
-		INFOPRINTF("j9shr_updateAttachedData returned correct code for realtime cache");
-		rc = PASS;
-	}
-#else
-	if (true == readOnlyCache) {
+
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF2("j9shr_updateAttachedData returned incorrect code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
 			rc = FAIL;
@@ -1130,7 +1079,6 @@ AttachedDataTest::UpdateJitHint(J9JavaVM *vm)
 			ERRPRINTF("failed to find updated data");
 		}
 	}
-#endif
 
 _exit:
 	if (NULL != updateData) {
@@ -1152,10 +1100,6 @@ AttachedDataTest::UpdateAttachedDataFailure(J9JavaVM *vm)
 	U_8 *updateData;
 	const char *testName = "UpdateAttachedDataFailure";
 	PORT_ACCESS_FROM_JAVAVM(vm);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	memset(&attachedData, 0, sizeof(SharedAttachedData));
@@ -1194,7 +1138,7 @@ AttachedDataTest::UpdateAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.type = dataList[1].data.type;
 	attachedData.data.flags = (UDATA)-1;
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedData(currentThread, attachedData.keyAddress, 0, &attachedData.data);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF1("j9shr_storeAttachedData returned incorrect code for read only cache, rc: %d", rc);
 			rc = FAIL;
@@ -1220,7 +1164,7 @@ AttachedDataTest::UpdateAttachedDataFailure(J9JavaVM *vm)
 	attachedData.data.flags = dataList[1].data.flags;
 	j9tty_printf(PORTLIB, "\t");
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedData(currentThread, attachedData.keyAddress, 0, &attachedData.data);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF1("j9shr_storeAttachedData returned incorrect code for read only cache, rc: %d", rc);
 			rc = FAIL;
@@ -1249,7 +1193,7 @@ AttachedDataTest::UpdateAttachedUDATASuccess(J9JavaVM *vm)
 	I_32 updateOffset;
 	UDATA updateData;
 	I_32 align = sizeof(UDATA);
-    const char* testName = "UpdateAttachedUDATASuccess";
+	const char* testName = "UpdateAttachedUDATASuccess";
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
@@ -1259,16 +1203,8 @@ AttachedDataTest::UpdateAttachedUDATASuccess(J9JavaVM *vm)
 	updateOffset = ((I_32)dataList[1].data.length/2 > align) ? (I_32)((dataList[1].data.length/2) & (~(align-1))) : 0;
 
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedUDATA(currentThread, dataList[1].keyAddress, dataList[1].data.type, updateOffset, updateData);
-#if defined(J9SHR_CACHELET_SUPPORT)
-	if (J9SHR_RESOURCE_STORE_ERROR != rc) {
-		ERRPRINTF2("j9shr_updateAttachedUDATA returned incorrect code for realtime cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
-		rc = FAIL;
-	} else {
-		INFOPRINTF("j9shr_updateAttachedUDATA returned correct code for realtime cache");
-		rc = PASS;
-	}
-#else
-	if (true == readOnlyCache) {
+
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF2("j9shr_updateAttachedUDATA returned incorrect code for read only cache, expected error code: %d, returned: %d", J9SHR_RESOURCE_STORE_ERROR, rc);
 			rc = FAIL;
@@ -1327,7 +1263,6 @@ AttachedDataTest::UpdateAttachedUDATASuccess(J9JavaVM *vm)
 			break;
 		}
 	}
-#endif
 
 	return rc;
 }
@@ -1345,10 +1280,6 @@ AttachedDataTest::UpdateAttachedUDATAFailure(J9JavaVM *vm)
 	const char *testName="UpdateAttachedUDATAFailure";
 	I_32 align = sizeof(UDATA);
 	PORT_ACCESS_FROM_JAVAVM(vm);
-
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 
@@ -1382,7 +1313,7 @@ AttachedDataTest::UpdateAttachedUDATAFailure(J9JavaVM *vm)
 	ca = cc->getCacheHeaderAddress();
 	j9tty_printf(PORTLIB, "\t");
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedUDATA(currentThread, (U_8 *)ca, J9SHR_ATTACHED_DATA_TYPE_JITPROFILE, 0, updateData);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF1("j9shr_storeAttachedData returned incorrect code for read only cache, rc: %d", rc);
 			rc = FAIL;
@@ -1411,9 +1342,6 @@ AttachedDataTest::CorruptAttachedData(J9JavaVM *vm)
 	I_32 updateAtOffset = 1;
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-#if defined(J9SHR_CACHELET_SUPPORT)
-	return PASS;
-#endif
 	INFOPRINTF("Running CorruptAttachedData\n\t");
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
 
@@ -1424,9 +1352,8 @@ AttachedDataTest::CorruptAttachedData(J9JavaVM *vm)
 		rc = FAIL;
 		goto _exit;
 	}
-	strncpy((char *)data.address, content, strlen(content));
-	data.address[strlen(content)] = '\0';
 	data.length = strlen(content) + 1;
+	memcpy((char *)data.address, content, data.length); /* copy NUL */
 	data.type = dataList[2].data.type;
 	data.flags = dataList[2].data.flags;
 	j9tty_printf(PORTLIB, "\t");
@@ -1434,7 +1361,7 @@ AttachedDataTest::CorruptAttachedData(J9JavaVM *vm)
 	UnitTest::unitTest = UnitTest::ATTACHED_DATA_TEST;
 
 	rc = (IDATA) vm->sharedClassConfig->updateAttachedData(currentThread, dataList[2].keyAddress, updateAtOffset, &data);
-	if (true == readOnlyCache) {
+	if (readOnlyCache) {
 		if (J9SHR_RESOURCE_STORE_ERROR != rc) {
 			ERRPRINTF1("j9shr_storeAttachedData returned incorrect code for read only cache, rc: %d", rc);
 			rc = FAIL;
@@ -1508,19 +1435,19 @@ startReader(void *entryArg) {
 	J9VMThread *currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-	vm->internalVMFunctions->internalAcquireVMAccess(currentThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
 
 	/* writer thread must have failed, no need to proceed */
-	if (true == adt->cancelThread) {
+	if (adt->cancelThread) {
 		goto _exitCloseCache;
 	}
 
-    /* Reader thread needs to use same cache memory as writer thread */
-    rc = adt->openTestCache(vm, writerCacheMemory, writerCacheSize, J9PORT_SHR_CACHE_TYPE_PERSISTENT, J9SHR_RUNTIMEFLAG_ENABLE_READONLY, 0);
-    if (FAIL == rc) {
-    	ERRPRINTF("openTestCache failed");
-    	goto _exitCloseCache;
-    }
+	/* Reader thread needs to use same cache memory as writer thread */
+	rc = adt->openTestCache(vm, writerCacheMemory, writerCacheSize, J9PORT_SHR_CACHE_TYPE_PERSISTENT, J9SHR_RUNTIMEFLAG_ENABLE_READONLY, 0);
+	if (FAIL == rc) {
+		ERRPRINTF("openTestCache failed");
+		goto _exitCloseCache;
+	}
 
 	UnitTest::unitTest = UnitTest::ATTACHED_DATA_UPDATE_COUNT_TEST;
 
@@ -1547,7 +1474,7 @@ startReader(void *entryArg) {
 
 _exitCloseCache:
 	adt->closeTestCache(vm, false);
-	vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+	vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	UnitTest::unitTest = UnitTest::NO_TEST;
 	vm->internalVMFunctions->threadCleanup(currentThread, 0);
 	INFOPRINTF("Reader thread exited\n");
@@ -1564,15 +1491,15 @@ startWriter(void *entryArg) {
 	J9VMThread *currentThread = vm->internalVMFunctions->currentVMThread(vm);
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
-	vm->internalVMFunctions->internalAcquireVMAccess(currentThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
 
-    rc = adt->openTestCache(vm, NULL, 0, J9PORT_SHR_CACHE_TYPE_PERSISTENT, 0, 0);
-    if (FAIL == rc) {
-    	ERRPRINTF("openTestCache failed");
-    	goto _exitCloseCache;
-    }
-    writerCacheMemory = adt->cacheMemory;
-    writerCacheSize = adt->piConfig->sharedClassCacheSize;
+	rc = adt->openTestCache(vm, NULL, 0, J9PORT_SHR_CACHE_TYPE_PERSISTENT, 0, 0);
+	if (FAIL == rc) {
+		ERRPRINTF("openTestCache failed");
+		goto _exitCloseCache;
+	}
+	writerCacheMemory = adt->cacheMemory;
+	writerCacheSize = adt->piConfig->sharedClassCacheSize;
 
 	rc = adt->initializeAttachedData(vm);
 	if (FAIL == rc) {
@@ -1593,7 +1520,7 @@ startWriter(void *entryArg) {
 
 	omrthread_suspend();
 
-	if (true == adt->cancelThread) {
+	if (adt->cancelThread) {
 		/* reader thread must have failed, no need to proceed */
 		goto _exitCloseCache;
 	}
@@ -1606,7 +1533,7 @@ startWriter(void *entryArg) {
 	INFOPRINTF("Successfully updated data\n\t");
 	omrthread_suspend();
 
-	if (true == adt->cancelThread) {
+	if (adt->cancelThread) {
 		/* reader thread must have failed, no need to proceed */
 		goto _exitCloseCache;
 	}
@@ -1631,7 +1558,7 @@ startWriter(void *entryArg) {
 
 _exitCloseCache:
 	adt->closeTestCache(vm, true);
-	vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+	vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	vm->internalVMFunctions->threadCleanup(currentThread, 0);
 	INFOPRINTF("Writer thread exited\n");
 	adt->threadExited = true;
@@ -1682,7 +1609,7 @@ testFindReadOnly(J9JavaVM *vm) {
 	/* Wait for writer thread to be suspended */
 	while (adtWriter.isThreadSuspended() == false) {
 		/* If writer thread exited without getting suspended, stop reader thread as well */
-		if (true == adtWriter.threadExited) {
+		if (adtWriter.threadExited) {
 			adtReader.cancelThread = true;
 			/* Give reader thread a chance to exit gracefully */
 			omrthread_resume(adtReader.osThread);
@@ -1700,7 +1627,7 @@ testFindReadOnly(J9JavaVM *vm) {
 		/* Wait for reader thread to be suspended */
 		while (adtReader.isThreadSuspended() == false) {
 			/* If reader thread exited without getting suspended, stop writer thread as well */
-			if (true == adtReader.threadExited) {
+			if (adtReader.threadExited) {
 				adtWriter.cancelThread = true;
 				/* Give writer thread a chance to exit gracefully */
 				omrthread_resume(adtWriter.osThread);
@@ -1716,7 +1643,7 @@ testFindReadOnly(J9JavaVM *vm) {
 		/* Wait for writer thread to be suspended */
 		while (adtWriter.isThreadSuspended() == false) {
 			/* If writer thread exited without getting suspended, stop reader thread as well */
-			if (true == adtWriter.threadExited) {
+			if (adtWriter.threadExited) {
 				adtReader.cancelThread = true;
 				/* Give reader thread a chance to exit gracefully.
 				 * Clear UnitTest::unitTest so that reader thread can exit without suspending itself again.
@@ -1740,7 +1667,7 @@ testFindReadOnly(J9JavaVM *vm) {
 	/* Wait for reader thread to be suspended */
 	while (adtReader.isThreadSuspended() == false) {
 		/* If reader thread exited without getting suspended, stop writer thread as well */
-		if (true == adtReader.threadExited) {
+		if (adtReader.threadExited) {
 			adtWriter.cancelThread = true;
 			/* Give writer thread a chance to exit gracefully */
 			omrthread_resume(adtWriter.osThread);
@@ -1756,7 +1683,7 @@ testFindReadOnly(J9JavaVM *vm) {
 	/* Wait for writer thread to be suspended */
 	while (adtWriter.isThreadSuspended() == false) {
 		/* If writer thread exited without getting suspended, stop reader thread as well */
-		if (true == adtWriter.threadExited) {
+		if (adtWriter.threadExited) {
 			adtReader.cancelThread = true;
 			/* Give reader thread a chance to exit gracefully.
 			 * Clear UnitTest::unitTest so that reader thread can exit without suspending itself again.
@@ -1809,7 +1736,7 @@ testAttachedData(J9JavaVM* vm)
 	REPORT_START("AttachedDataTest");
 
 	currentThread = vm->internalVMFunctions->currentVMThread(vm);
-	vm->internalVMFunctions->internalAcquireVMAccess(currentThread);
+	vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
 
 	for(i = 0; i < 4; i++) {
 		U_64 extraRuntimeFlag = 0;
@@ -1826,10 +1753,9 @@ testAttachedData(J9JavaVM* vm)
 #endif
 			break;
 		case 1:
-#if !defined(J9SHR_CACHELET_SUPPORT)
 			cacheType = J9PORT_SHR_CACHE_TYPE_NONPERSISTENT;
 			readOnly = false;
-#endif
+
 			break;
 		case 2:
 #if !(defined(J9ZOS390))
@@ -1838,10 +1764,9 @@ testAttachedData(J9JavaVM* vm)
 #endif
 			break;
 		case 3:
-#if !defined(J9SHR_CACHELET_SUPPORT)
 			cacheType = J9PORT_SHR_CACHE_TYPE_NONPERSISTENT;
 			readOnly = true;
-#endif
+
 			break;
 		}
 
@@ -1866,7 +1791,7 @@ testAttachedData(J9JavaVM* vm)
 				goto _exitClearData;
 			}
 
-			if (true == readOnly) {
+			if (readOnly) {
 				/* close read-write cache and open it again as read-only */
 				adt.closeTestCache(vm, false);
 				extraRuntimeFlag |= J9SHR_RUNTIMEFLAG_ENABLE_READONLY;
@@ -1965,7 +1890,7 @@ _exitCloseCache:
 	UnitTest::cacheSize = 0;
 	UnitTest::cacheMemory = NULL;
 
-	vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+	vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	REPORT_SUMMARY("AttachedDataTest", rc);
 	return rc;
 

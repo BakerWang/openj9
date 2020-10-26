@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <string.h>
@@ -55,35 +55,21 @@ typedef struct J9JVMTIExtensionEventInfo {
 } J9JVMTIExtensionEventInfo;
 
 static jvmtiError copyErrors (jvmtiEnv* env, jvmtiError** dest, const jvmtiError* source, jint count);
-static jvmtiError JNICALL jvmtiRelinquishExtendedCapabilities (jvmtiEnv* jvmti_env, ...);
 static jvmtiError copyString (jvmtiEnv* env, char** dest, const char* source);
-static jvmtiError JNICALL jvmtiGetPotentialExtendedCapabilities (jvmtiEnv* jvmti_env, ...);
-#if (defined(J9VM_INTERP_NATIVE_SUPPORT)) 
-static jvmtiError JNICALL jvmtiAllowMethodInliningWithMethodEnterExit (jvmtiEnv* jvmti_env, ...);
-static jvmtiError JNICALL jvmtiAllowDirectJNIWithMethodEnterExit(jvmtiEnv* jvmti_env, ...);
-#endif /* J9VM_INTERP_NATIVE_SUPPORT */
 static void freeExtensionFunctionInfo (jvmtiEnv* env, jvmtiExtensionFunctionInfo* info);
 static jvmtiError copyParam (jvmtiEnv* env, jvmtiParamInfo* dest, const jvmtiParamInfo* source);
 static jvmtiError copyParams (jvmtiEnv* env, jvmtiParamInfo** dest, const jvmtiParamInfo* source, jint count);
-static jvmtiError jvmtiFlagSet (jvmtiEnv* env, UDATA flag);
-static jvmtiError JNICALL jvmtiSetExtendedEventNotificationMode (jvmtiEnv* env, jint mode, jint extension_event_index, jthread event_thread, ...);
-static jvmtiError JNICALL jvmtiSetVmAndCompilingControlOptions (jvmtiEnv* jvmti_env, jint option, ...);
-static jvmtiError JNICALL jvmtiSetMethodSelectiveEntryExitNotification (jvmtiEnv* env, jmethodID mid, ...);
 static jvmtiError JNICALL jvmtiJlmDump (jvmtiEnv* env, void ** dump_info,...);
 static jvmtiError JNICALL jvmtiDumpSet (jvmtiEnv* jvmti_env, ...);
 static jvmtiError JNICALL jvmtiTraceSet (jvmtiEnv* jvmti_env, ...);
 static jvmtiError JNICALL jvmtiResetVmDump (jvmtiEnv* jvmti_env, ...);
 static jvmtiError JNICALL jvmtiQueryVmDump(jvmtiEnv* jvmti_env, jint buffer_size, void* options_buffer, jint* data_size_ptr, ...);
 static jvmtiError copyExtensionFunctionInfo (jvmtiEnv* env, jvmtiExtensionFunctionInfo* dest, const J9JVMTIExtensionFunctionInfo* source);
-static jvmtiError JNICALL jvmtiAddExtendedCapabilities (jvmtiEnv* jvmti_env, ...);
 static jvmtiError JNICALL jvmtiJlmSet (jvmtiEnv* env, jint option, ...);
-static jvmtiError JNICALL jvmtiGetExtendedCapabilities (jvmtiEnv* jvmti_env, ...);
 static jvmtiError copyExtensionEventInfo (jvmtiEnv* env, jvmtiExtensionEventInfo* dest, const J9JVMTIExtensionEventInfo* source);
 static void freeExtensionEventInfo (jvmtiEnv* env, jvmtiExtensionEventInfo* info);
 static jvmtiError JNICALL jvmtiTriggerVmDump (jvmtiEnv* jvmti_env, ...);
 static jvmtiError JNICALL jvmtiGetOSThreadID(jvmtiEnv* jvmti_env, jthread thread, jlong * threadid_ptr, ...);
-static jvmtiError JNICALL jvmtiSignalAsyncEvent(jvmtiEnv* env, jthread thread, ...);
-static jvmtiError JNICALL jvmtiCancelAsyncEvent(jvmtiEnv* env, jthread thread, ...);
 
 static jvmtiError JNICALL jvmtiGetStackTraceExtended(jvmtiEnv* env, jint type, jthread thread, jint start_depth, jint max_frame_count, void* frame_buffer, jint* count_ptr, ...);
 static jvmtiError JNICALL jvmtiGetAllStackTracesExtended(jvmtiEnv* env, jint type, jint max_frame_count, void** stack_info_ptr, jint* thread_count_ptr, ...);
@@ -104,8 +90,6 @@ static jvmtiError JNICALL jvmtiDeregisterTraceSubscriber(jvmtiEnv *env, void *su
 static jvmtiError JNICALL jvmtiFlushTraceData(jvmtiEnv *env, ...);
 static jvmtiError JNICALL jvmtiGetTraceMetadata(jvmtiEnv *env, void **data, jint *length, ...);
 static jvmtiError JNICALL jvmtiGetMethodAndClassNames(jvmtiEnv *env, void * ramMethods, jint ramMethodCount, jvmtiExtensionRamMethodData * ramMethodDataDescriptors, jchar * ramMethodStrings, jint * ramMethodStringsSize, ...);
-
-static jvmtiError JNICALL jvmtiClearMethodSelectiveEntryExitNotification (jvmtiEnv* env, jmethodID mid, ...);
 
 static jvmtiError JNICALL jvmtiQueryVmLogOptions(jvmtiEnv* jvmti_env, jint buffer_size, void* options_buffer, jint* data_size, ...);
 static jvmtiError JNICALL jvmtiSetVmLogOptions(jvmtiEnv* jvmti_env, char* options_buffer, ...);
@@ -147,50 +131,18 @@ static void hookVerboseGCOutput(J9HookInterface **hook, UDATA eventNum, void *ev
  * Parameter lists for extended functions and events
  */
 
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetPotentialExtendedCapabilities_params[] = { 
-	{ "capabilities_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_CVOID, JNI_FALSE } 
-};
-
-static J9CONST_TABLE jvmtiParamInfo jvmtiAddExtendedCapabilities_params[] = { 
-	{ "capabilities_ptr", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE } 
-};
-
-static J9CONST_TABLE jvmtiParamInfo jvmtiRelinquishExtendedCapabilities_params[] = { 
-	{ "capabilities_ptr", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE } 
-};
-
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetExtendedCapabilities_params[] = { 
-	{ "capabilities_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_CVOID, JNI_FALSE } 
-};
-
 /* (jvmtiEnv *jvmti_env, jmethodID method) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiCompilingStart_params[] = { 
+static const jvmtiParamInfo jvmtiCompilingStart_params[] = { 
 	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env, jmethodID method) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiCompilingEnd_params[] = { 
+static const jvmtiParamInfo jvmtiCompilingEnd_params[] = { 
 	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE } 
-};
-
-/* (jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jint type) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiMethodEntryExtended_params[] = { 
-	{ "jni_env", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JNIENV, JNI_FALSE },
-	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
-	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE },
-	{ "type", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE } 
-};
-
-/* (jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jmethodID method, jint type) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiMethodExitNoRc_params[] = { 
-	{ "jni_env", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JNIENV, JNI_FALSE },
-	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
-	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE },
-	{ "was_popped_by_exception", JVMTI_KIND_IN, JVMTI_TYPE_JBOOLEAN, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread, jobject object, jclass object_klass, jlong size) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiInstrumentableObjectAlloc_params[] = { 
+static const jvmtiParamInfo jvmtiInstrumentableObjectAlloc_params[] = { 
 	{ "jni_env", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JNIENV, JNI_FALSE },
 	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
 	{ "object", JVMTI_KIND_IN, JVMTI_TYPE_JOBJECT, JNI_FALSE },
@@ -198,79 +150,52 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiInstrumentableObjectAlloc_params[] = {
 	{ "size", JVMTI_KIND_IN, JVMTI_TYPE_JLONG, JNI_FALSE }
 };
 
-/* (jvmtiEnv* env, jint mode, jint extension_event_index, jthread event_thread) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiSetExtendedEventNotificationMode_params[] = { 
-	{ "mode", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JINT, JNI_FALSE },
-	{ "event_type", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JINT, JNI_FALSE },
-	{ "event_thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_TRUE },
-};
-
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetOSThreadID_params[] = { 
+static const jvmtiParamInfo jvmtiGetOSThreadID_params[] = { 
 	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_TRUE },
 	{ "threadid_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_JLONG, JNI_FALSE },
 };
 
-static J9CONST_TABLE jvmtiParamInfo jvmtiAsync_params[] = { 
-	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_TRUE },
-};
-
 /* (jvmtiEnv *jvmti_env, jint option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiTraceSet_params[] = { 
+static const jvmtiParamInfo jvmtiTraceSet_params[] = { 
 	{ "option", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env, const char* option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiDumpSet_params[] = { 
+static const jvmtiParamInfo jvmtiDumpSet_params[] = { 
 	{ "option", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env,  jint option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiJlmSet_params[] = { 
+static const jvmtiParamInfo jvmtiJlmSet_params[] = { 
 	{ "option", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JINT, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env, ** JlmDump) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiJlmDump_params[] = { 
+static const jvmtiParamInfo jvmtiJlmDump_params[] = { 
 	{ "jlm_dump_ptr", JVMTI_KIND_ALLOC_BUF, JVMTI_TYPE_CVOID, JNI_FALSE } 
 };
 
-/* (jvmtiEnv *jvmti_env,  jint option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiControlSet_params[] = {
-		{ "option", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JINT, JNI_FALSE }
-};
-
-/* (jvmtiEnv *jvmti_env, jmethodID method) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiSetMethodSelectiveEntryExitNotification_params[] = {
-	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE },
-};
-
 /* (jvmtiEnv *jvmti_env, const char* option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiTriggerVmDump_params[] = { 
+static const jvmtiParamInfo jvmtiTriggerVmDump_params[] = { 
 	{ "option", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE } 
 };
 
 /* (jvmtiEnv *jvmti_env, jint option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiVmDumpStart_params[] = {
+static const jvmtiParamInfo jvmtiVmDumpStart_params[] = {
 	{ "label", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "event", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "detail", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_TRUE }
 };
 
 /* (jvmtiEnv *jvmti_env, jint option) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiVmDumpEnd_params[] = {
+static const jvmtiParamInfo jvmtiVmDumpEnd_params[] = {
 	{ "label", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "event", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "detail", JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_TRUE }
 };
 
-/* (jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiAsyncEvent_params[] = {
-	{ "jni_env", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JNIENV, JNI_FALSE },
-	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
-};
-
 /* (jvmtiEnv *jvmti_env, jthread thread, jint start_depth, jint max_frame_count, void* frame_buffer, jint* count_ptr ) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetStackTraceExtended_params[] = {
+static const jvmtiParamInfo jvmtiGetStackTraceExtended_params[] = {
 	{ "type", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },	 
 	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
 	{ "start_depth", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
@@ -280,7 +205,7 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiGetStackTraceExtended_params[] = {
 };
 
 /* (jvmtiEnv *jvmti_env, jint max_frame_count, void** stack_info_ptr, jint* thread_count_ptr ) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetAllStackTracesExtended_params[] = {
+static const jvmtiParamInfo jvmtiGetAllStackTracesExtended_params[] = {
 	{ "type", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "max_frame_count", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "stack_info_ptr", JVMTI_KIND_ALLOC_BUF, JVMTI_TYPE_CVOID, JNI_FALSE },
@@ -288,7 +213,7 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiGetAllStackTracesExtended_params[] = {
 };
 
 /* (jvmtiEnv *jvmti_env, jint thread_count, jthread* thread_list, jint max_frame_count, void** stack_info_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetThreadListStackTracesExtended_params[] = {
+static const jvmtiParamInfo jvmtiGetThreadListStackTracesExtended_params[] = {
 	{ "type", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },	 
 	{ "thread_count", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "thread_list", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE },
@@ -297,17 +222,17 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiGetThreadListStackTracesExtended_params
 };
 
 /* (jvmtiEnv *jvmti_env, jlong *heapFree_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetHeapFreeMemory_params[] = {
+static const jvmtiParamInfo jvmtiGetHeapFreeMemory_params[] = {
 	{ "heapFree_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_JLONG, JNI_FALSE }
 };
 
 /* (jvmtiEnv *jvmti_env, jlong *heapTotal_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetHeapTotalMemory_params[] = {
+static const jvmtiParamInfo jvmtiGetHeapTotalMemory_params[] = {
 	{ "heapTotal_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_JLONG, JNI_FALSE }
 };
 
 /* (jvmtiEnv *jvmti_env, jint version, const char *cacheDir, jboolean useCommandLineValues, jvmtiIterateSharedCachesCallback *callback, void *user_data) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiIterateSharedCaches_params[] = {
+static const jvmtiParamInfo jvmtiIterateSharedCaches_params[] = {
 	{ "version", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "cacheDir", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_TRUE },
 	{ "flags", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
@@ -317,7 +242,7 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiIterateSharedCaches_params[] = {
 };
 
 /* (jvmtiEnv *jvmti_env, const char *cacheDir, char *name, jint persistence, jboolean useCommandLineValues)  */
-static J9CONST_TABLE jvmtiParamInfo jvmtiDestroySharedCache_params[] = {
+static const jvmtiParamInfo jvmtiDestroySharedCache_params[] = {
 	{ "cacheDir", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_TRUE },
 	{ "name", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_TRUE },
 	{ "persistence", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
@@ -325,15 +250,8 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiDestroySharedCache_params[] = {
 	{ "internalErrorCode", JVMTI_KIND_OUT, JVMTI_TYPE_JINT, JNI_TRUE }
 };
 
-/* (jvmtiEnv *jvmti_env, JNIEnv* jni_env,  jthread thread, jclass klass) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiArrayClassLoad_params[] = { 
-	{ "jni_env", JVMTI_KIND_IN_PTR, JVMTI_TYPE_JNIENV, JNI_FALSE},
-	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_FALSE},
-	{ "object_klass", JVMTI_KIND_IN, JVMTI_TYPE_JCLASS, JNI_FALSE}
-};
-
 /* (jvmtiEnv *jvmti_env, char *description, jvmtiTraceSubscriber *subscriber, jvmtiTraceAlarm *alarm, void *userData, void **subscriptionID) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterTraceSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiRegisterTraceSubscriber_params[] = {
 	{ "description", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "subscriber", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "alarm", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_TRUE },
@@ -342,19 +260,19 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterTraceSubscriber_params[] = {
 };
 
 /* (jvmtiEnv *jvmti_env, jvmtiTraceSubscriber *subscriber, void (*alarm)(void)) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiDeregisterTraceSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiDeregisterTraceSubscriber_params[] = {
 	{ "subscription_id", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE }
 };
 
 /* (jvmtiEnv *jvmti_env, jvmtiTraceSubscriber *subscriber, void (*alarm)(void)) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetTraceMetadata_params[] = {
+static const jvmtiParamInfo jvmtiGetTraceMetadata_params[] = {
 	{ "data", JVMTI_KIND_OUT, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "length", JVMTI_KIND_OUT, JVMTI_TYPE_JINT, JNI_FALSE }
 };
 
 /* (jvmtiEnv *jvmti_env,  void * ramMethods, jint ramMethodCount, jvmtiExtensionRamMethodData * ramMethodDataDescriptors, 
     jchar * ramMethodStrings, jint * ramMethodDataDescriptorsCount) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetMethodAndClassNames_params[] = {
+static const jvmtiParamInfo jvmtiGetMethodAndClassNames_params[] = {
 	{ "ramMethods", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "ramMethodCount", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "ramMethodDataDescriptors", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_FALSE },
@@ -364,39 +282,25 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiGetMethodAndClassNames_params[] = {
 };
  
 /* (jvmtiEnv *jvmti_env, jobject object, jint buffer_size, void* options_buffer, jint* data_size_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiQueryVmDump_params[] = {
-	{ "buffer_size", JVMTI_KIND_IN_BUF, JVMTI_TYPE_JINT, JNI_FALSE },
-	{ "options_buffer",  JVMTI_KIND_OUT_BUF, JVMTI_TYPE_CVOID, JNI_FALSE },
-	{ "data_size_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_JINT, JNI_FALSE }
-};
-
-/* (jvmtiEnv *jvmti_env) takes no parameters */
-
-/* (jvmtiEnv *jvmti_env, jmethodID method) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiClearMethodSelectiveEntryExitNotification_params[] = {
-	{ "method", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_FALSE },
-};
-
-/* (jvmtiEnv *jvmti_env, jobject object, jint buffer_size, void* options_buffer, jint* data_size_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiQueryVmLogOptions_params[] = {
+static const jvmtiParamInfo jvmtiQueryVmLogOptions_params[] = {
 	{ "buffer_size", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "options_buffer",  JVMTI_KIND_OUT_BUF, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "data_size_ptr", JVMTI_KIND_OUT, JVMTI_TYPE_JINT, JNI_FALSE }
 };
 
 /* (jvmtiEnv *jvmti_env, void *options_buffer) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiSetVmLogOptions_params[] = {
+static const jvmtiParamInfo jvmtiSetVmLogOptions_params[] = {
 	{ "options_buffer",  JVMTI_KIND_IN_BUF, JVMTI_TYPE_CCHAR, JNI_FALSE }
 };
 
 /* (jvmtiEnv * jvmti_env, ** dump_info, jint dump_format) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiJlmDumpStats_params[] = { 
+static const jvmtiParamInfo jvmtiJlmDumpStats_params[] = { 
 	{ "dump_info", JVMTI_KIND_ALLOC_BUF, JVMTI_TYPE_CVOID, JNI_FALSE },
     { "dump_format", JVMTI_KIND_IN_BUF, JVMTI_TYPE_JINT, JNI_FALSE }
 };
 
 /* (jvmtiEnv* env, jint version, jint max_categories, jvmtiMemoryCategory * categories_buffer, jint * written_count_ptr, jint * total_categories_ptr) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetMemoryCategories_params[] = {
+static const jvmtiParamInfo jvmtiGetMemoryCategories_params[] = {
 	{ "version", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "max_categories", JVMTI_KIND_IN, JVMTI_TYPE_JINT, JNI_FALSE },
 	{ "categories_buffer",  JVMTI_KIND_OUT_BUF, JVMTI_TYPE_CCHAR, JNI_TRUE },
@@ -405,7 +309,7 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiGetMemoryCategories_params[] = {
 };
 
 /* (jvmtiEnv *env, char *description, jvmtiVerboseGCSubscriber subscriber, jvmtiVerboseGCAlarm alarm, void *userData, void **subscriptionID) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterVerboseGCSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiRegisterVerboseGCSubscriber_params[] = {
 	{ "description", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "subscriber", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "alarm", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_TRUE },
@@ -414,22 +318,22 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterVerboseGCSubscriber_params[] = 
 };
 
 /* (jvmtiEnv *env, void *subscriptionID) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiDeregisterVerboseGCSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiDeregisterVerboseGCSubscriber_params[] = {
 	{ "subscription_id", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE }
 };
 
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetJ9vmThread_params[] = {
+static const jvmtiParamInfo jvmtiGetJ9vmThread_params[] = {
 	{ "thread", JVMTI_KIND_IN, JVMTI_TYPE_JTHREAD, JNI_TRUE },
 	{ "vmThreadPtr", JVMTI_KIND_OUT, JVMTI_TYPE_CVOID, JNI_TRUE }
 };
 
-static J9CONST_TABLE jvmtiParamInfo jvmtiGetJ9method_params[] = {
+static const jvmtiParamInfo jvmtiGetJ9method_params[] = {
 	{ "mid", JVMTI_KIND_IN, JVMTI_TYPE_JMETHODID, JNI_TRUE },
 	{ "j9MethodPtr", JVMTI_KIND_OUT, JVMTI_TYPE_CVOID, JNI_TRUE }
 };
 
 /* (jvmtiEnv *env, char *description, jvmtiTraceSubscriber subscriber, jvmtiTraceAlarm alarm, void *userData, void **subscriptionID) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterTracePointSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiRegisterTracePointSubscriber_params[] = {
 	{ "description", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CCHAR, JNI_FALSE },
 	{ "subscriber", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE },
 	{ "alarm", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE },
@@ -438,7 +342,7 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiRegisterTracePointSubscriber_params[] =
 };
 
 /* (jvmtiEnv *env, void *subscriptionID) */
-static J9CONST_TABLE jvmtiParamInfo jvmtiDeregisterTracepointSubscriber_params[] = {
+static const jvmtiParamInfo jvmtiDeregisterTracepointSubscriber_params[] = {
 	{ "subscriptionID", JVMTI_KIND_IN_PTR, JVMTI_TYPE_CVOID, JNI_FALSE }
 };
 
@@ -446,20 +350,15 @@ static J9CONST_TABLE jvmtiParamInfo jvmtiDeregisterTracepointSubscriber_params[]
  * Error lists for extended functions
  */
 
-static J9CONST_TABLE jvmtiError nullPointer_errors[] = {
+static const jvmtiError nullPointer_errors[] = {
 	JVMTI_ERROR_NULL_POINTER
 };
 
-static J9CONST_TABLE jvmtiError notAvailable_errors[] = {
+static const jvmtiError notAvailable_errors[] = {
 	JVMTI_ERROR_NOT_AVAILABLE
 };
 
-static J9CONST_TABLE jvmtiError nullPointer_notAvailable_errors[] = {
-	JVMTI_ERROR_NULL_POINTER,
-	JVMTI_ERROR_NOT_AVAILABLE
-};
-
-static J9CONST_TABLE jvmtiError ras_errors[] = {
+static const jvmtiError ras_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -468,14 +367,14 @@ static J9CONST_TABLE jvmtiError ras_errors[] = {
 	JVMTI_ERROR_NOT_AVAILABLE,
 	JVMTI_ERROR_ILLEGAL_ARGUMENT
 };
-static J9CONST_TABLE jvmtiError jlm_set_errors[] = {
+static const jvmtiError jlm_set_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INTERNAL,
 	JVMTI_ERROR_NOT_AVAILABLE
 };
 
-static J9CONST_TABLE jvmtiError jlm_dump_errors[] = {
+static const jvmtiError jlm_dump_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -485,39 +384,14 @@ static J9CONST_TABLE jvmtiError jlm_dump_errors[] = {
 	JVMTI_ERROR_ILLEGAL_ARGUMENT
 };
 
-static J9CONST_TABLE jvmtiError control_set_errors[] = {
-		JVMTI_ERROR_WRONG_PHASE,
-		JVMTI_ERROR_ILLEGAL_ARGUMENT,
-		JVMTI_ERROR_NOT_AVAILABLE
-};
-
-static J9CONST_TABLE jvmtiError set_method_selective_errors[] = {
-	JVMTI_ERROR_NULL_POINTER,
-	JVMTI_ERROR_WRONG_PHASE,
-	JVMTI_ERROR_NOT_AVAILABLE
-};
-
-static J9CONST_TABLE jvmtiError set_event_notification_errors[] = {
-	JVMTI_ERROR_INVALID_THREAD,
-	JVMTI_ERROR_THREAD_NOT_ALIVE,
-	JVMTI_ERROR_ILLEGAL_ARGUMENT
-};
-
-static J9CONST_TABLE jvmtiError get_os_thread_id_errors[] = {
+static const jvmtiError get_os_thread_id_errors[] = {
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INVALID_THREAD,
 	JVMTI_ERROR_THREAD_NOT_ALIVE,
 	JVMTI_ERROR_NULL_POINTER
 };
 
-static J9CONST_TABLE jvmtiError jvmtiAsync_errors[] = {
-	JVMTI_ERROR_WRONG_PHASE,
-	JVMTI_ERROR_INVALID_THREAD,
-	JVMTI_ERROR_THREAD_NOT_ALIVE,
-	JVMTI_ERROR_ACCESS_DENIED
-};
-
-static J9CONST_TABLE jvmtiError jvmtiGetStack_errors[] = {
+static const jvmtiError jvmtiGetStack_errors[] = {
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INVALID_THREAD,
 	JVMTI_ERROR_THREAD_NOT_ALIVE,
@@ -526,7 +400,7 @@ static J9CONST_TABLE jvmtiError jvmtiGetStack_errors[] = {
 	JVMTI_ERROR_OUT_OF_MEMORY	
 };
 
-static J9CONST_TABLE jvmtiError jvmtiIterateSharedCaches_errors[] = {
+static const jvmtiError jvmtiIterateSharedCaches_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_WRONG_PHASE,
@@ -537,7 +411,7 @@ static J9CONST_TABLE jvmtiError jvmtiIterateSharedCaches_errors[] = {
 	JVMTI_ERROR_INVALID_ENVIRONMENT
 };
 
-static J9CONST_TABLE jvmtiError jvmtiDestroySharedCache_errors[] = {
+static const jvmtiError jvmtiDestroySharedCache_errors[] = {
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INTERNAL,
@@ -546,14 +420,14 @@ static J9CONST_TABLE jvmtiError jvmtiDestroySharedCache_errors[] = {
 	JVMTI_ERROR_INVALID_ENVIRONMENT
 };
 
-static J9CONST_TABLE jvmtiError jvmtiRegisterTraceSubscriber_errors[] = {
+static const jvmtiError jvmtiRegisterTraceSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
 	JVMTI_ERROR_WRONG_PHASE
 };
 
-static J9CONST_TABLE jvmtiError jvmtiDeregisterTraceSubscriber_errors[] = {
+static const jvmtiError jvmtiDeregisterTraceSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -562,32 +436,26 @@ static J9CONST_TABLE jvmtiError jvmtiDeregisterTraceSubscriber_errors[] = {
 	JVMTI_ERROR_NOT_AVAILABLE
 };
 
-static J9CONST_TABLE jvmtiError jvmtiFlushTraceData_errors[] = {
+static const jvmtiError jvmtiFlushTraceData_errors[] = {
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INVALID_ENVIRONMENT
 };
 
-static J9CONST_TABLE jvmtiError jvmtiGetTraceMetadata_errors[] = {
+static const jvmtiError jvmtiGetTraceMetadata_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,		
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INVALID_ENVIRONMENT
 };
 
-static J9CONST_TABLE jvmtiError jvmtiGetMethodAndClassNames_errors[] = {
-	JVMTI_ERROR_OUT_OF_MEMORY,
-	JVMTI_ERROR_WRONG_PHASE,
-	JVMTI_ERROR_INVALID_ENVIRONMENT
-};
-
-static J9CONST_TABLE jvmtiError jvmtiGetMemoryCategories_errors[] = {
+static const jvmtiError jvmtiGetMemoryCategories_errors[] = {
 	JVMTI_ERROR_UNSUPPORTED_VERSION,
 	JVMTI_ERROR_ILLEGAL_ARGUMENT,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
 	JVMTI_ERROR_OUT_OF_MEMORY
 };
  
-static J9CONST_TABLE jvmtiError jvmtiRegisterVerboseGCSubscriber_errors[] = {
+static const jvmtiError jvmtiRegisterVerboseGCSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -595,7 +463,7 @@ static J9CONST_TABLE jvmtiError jvmtiRegisterVerboseGCSubscriber_errors[] = {
 	JVMTI_ERROR_INTERNAL
 };
 
-static J9CONST_TABLE jvmtiError jvmtiDeregisterVerboseGCSubscriber_errors[] = {
+static const jvmtiError jvmtiDeregisterVerboseGCSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -603,20 +471,20 @@ static J9CONST_TABLE jvmtiError jvmtiDeregisterVerboseGCSubscriber_errors[] = {
 	JVMTI_ERROR_NOT_AVAILABLE
 };
 
-static J9CONST_TABLE jvmtiError jvmtiGet_j9vmthread_errors[] = {
+static const jvmtiError jvmtiGet_j9vmthread_errors[] = {
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_INVALID_THREAD,
 	JVMTI_ERROR_THREAD_NOT_ALIVE,
 	JVMTI_ERROR_NULL_POINTER
 };
 
-static J9CONST_TABLE jvmtiError jvmtiGet_j9method_errors[] = {
+static const jvmtiError jvmtiGet_j9method_errors[] = {
 	JVMTI_ERROR_WRONG_PHASE,
 	JVMTI_ERROR_NOT_AVAILABLE,
 	JVMTI_ERROR_NULL_POINTER
 };
 
-static J9CONST_TABLE jvmtiError jvmtiRegisterTracePointSubscriber_errors[] = {
+static const jvmtiError jvmtiRegisterTracePointSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -624,7 +492,7 @@ static J9CONST_TABLE jvmtiError jvmtiRegisterTracePointSubscriber_errors[] = {
 	JVMTI_ERROR_INTERNAL
 };
 
-static J9CONST_TABLE jvmtiError jvmtiDeregisterTracePointSubscriber_errors[] = {
+static const jvmtiError jvmtiDeregisterTracePointSubscriber_errors[] = {
 	JVMTI_ERROR_NULL_POINTER,
 	JVMTI_ERROR_OUT_OF_MEMORY,
 	JVMTI_ERROR_INVALID_ENVIRONMENT,
@@ -640,35 +508,7 @@ static J9CONST_TABLE jvmtiError jvmtiDeregisterTracePointSubscriber_errors[] = {
  * The extension function table
  */
 
-static J9CONST_TABLE J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTable[] = {
-	{
-		(jvmtiExtensionFunction) jvmtiGetPotentialExtendedCapabilities,
-		COM_IBM_GET_POTENTIAL_EXTENDED_CAPABILITIES,
-		J9NLS_JVMTI_COM_IBM_GET_POTENTIAL_EXTENDED_CAPABILITIES_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiGetPotentialExtendedCapabilities_params),
-		SIZE_AND_TABLE(nullPointer_errors)
-	}, 
-	{
-		(jvmtiExtensionFunction) jvmtiAddExtendedCapabilities,
-		COM_IBM_ADD_EXTENDED_CAPABILITIES,
-		J9NLS_JVMTI_COM_IBM_ADD_EXTENDED_CAPABILITIES_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiAddExtendedCapabilities_params),
-		SIZE_AND_TABLE(nullPointer_notAvailable_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiRelinquishExtendedCapabilities,
-		COM_IBM_RELINQUISH_EXTENDED_CAPABILITIES,
-		J9NLS_JVMTI_COM_IBM_RELINQUISH_EXTENDED_CAPABILITIES_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiRelinquishExtendedCapabilities_params),
-		SIZE_AND_TABLE(nullPointer_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiGetExtendedCapabilities,
-		COM_IBM_GET_EXTENDED_CAPABILITIES,
-		J9NLS_JVMTI_COM_IBM_GET_EXTENDED_CAPABILITIES_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiGetExtendedCapabilities_params),
-		SIZE_AND_TABLE(nullPointer_errors)
-	},
+static const J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTable[] = {
 	{
 		(jvmtiExtensionFunction) jvmtiTraceSet,
 		COM_IBM_SET_VM_TRACE,
@@ -697,43 +537,6 @@ static J9CONST_TABLE J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTa
 		SIZE_AND_TABLE(jvmtiJlmDump_params),
 		SIZE_AND_TABLE(jlm_dump_errors)
 	},
-#if defined(J9VM_INTERP_NATIVE_SUPPORT)
-	{
-		(jvmtiExtensionFunction) jvmtiAllowMethodInliningWithMethodEnterExit,
-		COM_IBM_ALLOW_INLINING_WITH_METHOD_ENTER_EXIT,
-		J9NLS_JVMTI_COM_IBM_ALLOW_INLINING_WITH_METHOD_ENTER_EXIT,
-		0, NULL,
-		SIZE_AND_TABLE(notAvailable_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiAllowDirectJNIWithMethodEnterExit,
-		COM_IBM_ALLOW_DIRECT_JNI_WITH_METHOD_ENTER_EXIT,
-		J9NLS_JVMTI_COM_IBM_ALLOW_DIRECT_JNI_WITH_METHOD_ENTER_EXIT,
-		0, NULL,
-		SIZE_AND_TABLE(notAvailable_errors)
-	},
-#endif
-	{
-		(jvmtiExtensionFunction) jvmtiSetVmAndCompilingControlOptions,
-		COM_IBM_SET_VM_AND_COMPILING_CONTROL_OPTIONS,
-		J9NLS_JVMTI_COM_IBM_SET_VM_AND_COMPILING_CONTROL_OPTIONS,
-		SIZE_AND_TABLE(jvmtiControlSet_params),
-		SIZE_AND_TABLE(control_set_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiSetMethodSelectiveEntryExitNotification,
-		COM_IBM_SET_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY,
-		J9NLS_JVMTI_COM_IBM_SET_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY,
-		SIZE_AND_TABLE(jvmtiSetMethodSelectiveEntryExitNotification_params),
-		SIZE_AND_TABLE(set_method_selective_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiSetExtendedEventNotificationMode,
-		COM_IBM_SET_EXTENDED_EVENT_NOTIFICATION_MODE,
-		J9NLS_JVMTI_COM_IBM_SET_EXTENDED_EVENT_NOTIFICATION_MODE,
-		SIZE_AND_TABLE(jvmtiSetExtendedEventNotificationMode_params),
-		SIZE_AND_TABLE(set_event_notification_errors)
-	},
 	{
 		(jvmtiExtensionFunction) jvmtiTriggerVmDump,
 		COM_IBM_TRIGGER_VM_DUMP,
@@ -747,20 +550,6 @@ static J9CONST_TABLE J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTa
 		J9NLS_JVMTI_COM_IBM_GET_OS_THREAD_ID,
 		SIZE_AND_TABLE(jvmtiGetOSThreadID_params),
 		SIZE_AND_TABLE(get_os_thread_id_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiSignalAsyncEvent,
-		COM_IBM_SIGNAL_ASYNC_EVENT,
-		J9NLS_JVMTI_COM_IBM_SIGNAL_ASYNC_EVENT,
-		SIZE_AND_TABLE(jvmtiAsync_params),
-		SIZE_AND_TABLE(jvmtiAsync_errors)
-	},
-	{
-		(jvmtiExtensionFunction) jvmtiCancelAsyncEvent,
-		COM_IBM_CANCEL_ASYNC_EVENT,
-		J9NLS_JVMTI_COM_IBM_CANCEL_ASYNC_EVENT,
-		SIZE_AND_TABLE(jvmtiAsync_params),
-		SIZE_AND_TABLE(jvmtiAsync_errors)
 	},
 	{
 		(jvmtiExtensionFunction) jvmtiGetStackTraceExtended,
@@ -868,13 +657,6 @@ static J9CONST_TABLE J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTa
 		SIZE_AND_TABLE(ras_errors)
 	},
 	{
-		(jvmtiExtensionFunction) jvmtiClearMethodSelectiveEntryExitNotification,
-		COM_IBM_CLEAR_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY,
-		J9NLS_JVMTI_COM_IBM_CLEAR_METHOD_SELECTIVE_ENTRY_EXIT_NOTIFY,
-		SIZE_AND_TABLE(jvmtiClearMethodSelectiveEntryExitNotification_params),
-		SIZE_AND_TABLE(set_method_selective_errors)
-	},
-	{
 		(jvmtiExtensionFunction) jvmtiQueryVmLogOptions,
 		COM_IBM_QUERY_VM_LOG_OPTIONS,
 		J9NLS_JVMTI_COM_IBM_QUERY_VM_LOG_OPTIONS,
@@ -952,14 +734,7 @@ static J9CONST_TABLE J9JVMTIExtensionFunctionInfo J9JVMTIExtensionFunctionInfoTa
  * The extension event table
  */
 
-static J9CONST_TABLE J9JVMTIExtensionEventInfo J9JVMTIExtensionEventInfoTable[] = {
-	{
-		J9JVMTI_EVENT_COM_IBM_METHOD_ENTRY_EXTENDED,
-		COM_IBM_METHOD_ENTRY_EXTENDED,
-		J9NLS_JVMTI_COM_IBM_METHOD_ENTRY_EXTENDED_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiMethodEntryExtended_params),
-	},	
-#if defined (J9VM_INTERP_NATIVE_SUPPORT)
+static const J9JVMTIExtensionEventInfo J9JVMTIExtensionEventInfoTable[] = {
 	{
 		J9JVMTI_EVENT_COM_IBM_COMPILING_START,
 		COM_IBM_COMPILING_START,
@@ -972,7 +747,6 @@ static J9CONST_TABLE J9JVMTIExtensionEventInfo J9JVMTIExtensionEventInfoTable[] 
 		J9NLS_JVMTI_COM_IBM_COMPILING_END_DESCRIPTION,
 		SIZE_AND_TABLE(jvmtiCompilingEnd_params),
 	}, 
-#endif
 	{
 		J9JVMTI_EVENT_COM_IBM_INSTRUMENTABLE_OBJECT_ALLOC,
 		COM_IBM_INSTRUMENTABLE_OBJECT_ALLOC,
@@ -992,18 +766,6 @@ static J9CONST_TABLE J9JVMTIExtensionEventInfo J9JVMTIExtensionEventInfoTable[] 
 		SIZE_AND_TABLE(jvmtiVmDumpEnd_params),
 	}, 
 	{
-		J9JVMTI_EVENT_ASYNC,
-		COM_IBM_ASYNC_EVENT,
-		J9NLS_JVMTI_COM_IBM_ASYNC_EVENT,
-		SIZE_AND_TABLE(jvmtiAsyncEvent_params),
-	},
-	{
-		J9JVMTI_EVENT_COM_IBM_METHOD_EXIT_NO_RC,
-		COM_IBM_METHOD_EXIT_NO_RC,
-		J9NLS_JVMTI_COM_IBM_METHOD_EXIT_NO_RC_DESCRIPTION,
-		SIZE_AND_TABLE(jvmtiMethodExitNoRc_params),
-	},
-	{
 		J9JVMTI_EVENT_COM_IBM_GARBAGE_COLLECTION_CYCLE_START,
 		COM_IBM_GARBAGE_COLLECTION_CYCLE_START,
 		J9NLS_JVMTI_COM_IBM_GARBAGE_COLLECTION_CYCLE_START_DESCRIPTION,
@@ -1015,12 +777,6 @@ static J9CONST_TABLE J9JVMTIExtensionEventInfo J9JVMTIExtensionEventInfoTable[] 
 		J9NLS_JVMTI_COM_IBM_GARBAGE_COLLECTION_CYCLE_FINISH_DESCRIPTION,
 		EMPTY_SIZE_AND_TABLE,
 	},
-	{
-		J9JVMTI_EVENT_COM_IBM_ARRAY_CLASS_LOAD,
-		COM_IBM_ARRAY_CLASS_LOAD,
-		J9NLS_JVMTI_COM_IBM_ARRAY_CLASS_LOAD,
-		SIZE_AND_TABLE(jvmtiArrayClassLoad_params),
-	}
 };
 
 #define NUM_EXTENSION_EVENTS (sizeof(J9JVMTIExtensionEventInfoTable) / sizeof(J9JVMTIExtensionEventInfoTable[0]))
@@ -1034,6 +790,8 @@ jvmtiGetExtensionFunctions(jvmtiEnv* env,
 	unsigned char* mem;
 	jvmtiError rc = JVMTI_ERROR_NONE;
 	PORT_ACCESS_FROM_JVMTI(env);
+	jint rv_extension_count = 0;
+	jvmtiExtensionFunctionInfo *rv_extensions = NULL;
 
 	Trc_JVMTI_jvmtiGetExtensionFunctions_Entry(env, extension_count_ptr, extensions);
 
@@ -1064,11 +822,17 @@ jvmtiGetExtensionFunctions(jvmtiEnv* env,
 			}
 		}
 
-		*extension_count_ptr = NUM_EXTENSION_FUNCTIONS;
-		*extensions = (jvmtiExtensionFunctionInfo*)mem;
+		rv_extension_count = NUM_EXTENSION_FUNCTIONS;
+		rv_extensions = (jvmtiExtensionFunctionInfo*)mem;
 	}
 
 done:
+	if (NULL != extension_count_ptr) {
+		*extension_count_ptr = rv_extension_count;
+	}
+	if (NULL != extensions) {
+		*extensions = rv_extensions;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetExtensionFunctions);
 }
 
@@ -1081,6 +845,8 @@ jvmtiGetExtensionEvents(jvmtiEnv* env,
 	jvmtiError rc = JVMTI_ERROR_NONE;
 	unsigned char* mem;
 	PORT_ACCESS_FROM_JVMTI(env);
+	jint rv_extension_count = 0;
+	jvmtiExtensionEventInfo *rv_extensions = NULL;
 
 	Trc_JVMTI_jvmtiGetExtensionEvents_Entry(env, extension_count_ptr, extensions);
 
@@ -1111,11 +877,17 @@ jvmtiGetExtensionEvents(jvmtiEnv* env,
 			}
 		}
 
-		*extension_count_ptr = NUM_EXTENSION_EVENTS;
-		*extensions = (jvmtiExtensionEventInfo*)mem;
+		rv_extension_count = NUM_EXTENSION_EVENTS;
+		rv_extensions = (jvmtiExtensionEventInfo*)mem;
 	}
 
 done:
+	if (NULL != extension_count_ptr) {
+		*extension_count_ptr = rv_extension_count;
+	}
+	if (NULL != extensions) {
+		*extensions = rv_extensions;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetExtensionEvents);
 }
 
@@ -1134,46 +906,13 @@ jvmtiSetExtensionEventCallback(jvmtiEnv* env,
 
 	rc = getCurrentVMThread(vm, &currentThread);
 	if (rc == JVMTI_ERROR_NONE) {
-		vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
-		if (extension_event_index == J9JVMTI_EVENT_ASYNC) {
-			vm->internalVMFunctions->acquireExclusiveVMAccess(currentThread);
-		}
-
-	   	/* Some extension events may require capabilities or extended capabilities */
-		switch (extension_event_index) {
-			case J9JVMTI_EVENT_COM_IBM_METHOD_ENTRY_EXTENDED:
-			case J9JVMTI_EVENT_COM_IBM_METHOD_EXIT_NO_RC:
-				if (callback) {
-					rc = isOKToEnableMethodEntryExit(env);
-					if (rc != JVMTI_ERROR_NONE) {
-						JVMTI_ERROR(rc);
-					}
-				}
-				break;				
-			default:
-				break;
-		}
-				
+		vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);				
 		rc = setEventNotificationMode(j9env, currentThread, (callback == NULL) ? JVMTI_DISABLE : JVMTI_ENABLE, extension_event_index, NULL,
 			J9JVMTI_LOWEST_EXTENSION_EVENT, J9JVMTI_HIGHEST_EXTENSION_EVENT);
 		if (rc == JVMTI_ERROR_NONE) {
 			J9JVMTI_EXTENSION_CALLBACK(j9env, extension_event_index) = (jvmtiExtensionEvent) J9_COMPATIBLE_FUNCTION_POINTER( callback );
-			if (extension_event_index == J9JVMTI_EVENT_ASYNC) {
-				if (NULL == callback) {
-					vm->internalVMFunctions->J9UnregisterAsyncEvent(vm, j9env->handlerKey);
-				} else {
-					if (j9env->handlerKey < 0) {
-						j9env->handlerKey = vm->internalVMFunctions->J9RegisterAsyncEvent(vm, asyncEventHandler, j9env);
-					}
-				}
-			}
 		}
-		
-done:
-		if (extension_event_index == J9JVMTI_EVENT_ASYNC) {
-			vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
-		}
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
 	TRACE_JVMTI_RETURN(jvmtiSetExtensionEventCallback);
@@ -1311,101 +1050,6 @@ freeExtensionFunctionInfo(jvmtiEnv* env, jvmtiExtensionFunctionInfo* info)
 	j9mem_free_memory(info->params);
 	j9mem_free_memory(info->errors);
 }
-
-
-
-static jvmtiError JNICALL
-jvmtiGetPotentialExtendedCapabilities(jvmtiEnv* jvmti_env, ...)
-{
-	jvmtiError rc;
-	void* capabilities_ptr;
-	va_list args;
-
-	Trc_JVMTI_jvmtiGetPotentialExtendedCapabilities_Entry(jvmti_env);
-
-	va_start(args, jvmti_env);
-	capabilities_ptr = va_arg(args, void*);
-	va_end(args);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(jvmti_env);
-	ENSURE_NON_NULL(capabilities_ptr);
-
-	/* TODO */
-	rc = JVMTI_ERROR_NONE;
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiGetPotentialExtendedCapabilities);
-}
-
-static jvmtiError JNICALL
-jvmtiAddExtendedCapabilities(jvmtiEnv* jvmti_env, ...)
-{
-	void* capabilities_ptr;
-	va_list args;
-	jvmtiError rc;
-
-	Trc_JVMTI_jvmtiAddExtendedCapabilities_Entry(jvmti_env);
-
-	va_start(args, jvmti_env);
-	capabilities_ptr = va_arg(args, void*);
-	va_end(args);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(jvmti_env);
-	ENSURE_NON_NULL(capabilities_ptr);
-
-	/* TODO */
-	rc = JVMTI_ERROR_NONE;
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiAddExtendedCapabilities);
-}
-
-static jvmtiError JNICALL
-jvmtiRelinquishExtendedCapabilities(jvmtiEnv* jvmti_env, ...)
-{
-	jvmtiError rc;
-	void* capabilities_ptr;
-	va_list args;
-
-	Trc_JVMTI_jvmtiRelinquishExtendedCapabilities_Entry(jvmti_env);
-
-	va_start(args, jvmti_env);
-	capabilities_ptr = va_arg(args, void*);
-	va_end(args);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(jvmti_env);
-	ENSURE_NON_NULL(capabilities_ptr);
-
-	/* TODO */
-	rc = JVMTI_ERROR_NONE;
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiRelinquishExtendedCapabilities);
-}
-
-static jvmtiError JNICALL
-jvmtiGetExtendedCapabilities(jvmtiEnv* jvmti_env, ...)
-{
-	jvmtiError rc;
-	void* capabilities_ptr;
-	va_list args;
-
-	Trc_JVMTI_jvmtiGetExtendedCapabilities_Entry(jvmti_env);
-
-	va_start(args, jvmti_env);
-	capabilities_ptr = va_arg(args, void*);
-	va_end(args);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(jvmti_env);
-	ENSURE_NON_NULL(capabilities_ptr);
-
-	/* TODO */
-	rc = JVMTI_ERROR_NONE;
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiGetExtendedCapabilities);
-}
-
 
 static jvmtiError 
 copyExtensionEventInfo(jvmtiEnv* env, jvmtiExtensionEventInfo* dest, const J9JVMTIExtensionEventInfo* source)
@@ -1718,7 +1362,7 @@ jvmtiJlmSet(jvmtiEnv* env, jint option, ...)
 		}
 	
 		vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
 #endif /* OMR_THR_JLM */
@@ -1743,189 +1387,6 @@ jvmtiJlmDump(jvmtiEnv* env, void ** dump_info,...)
 
 done:
 	TRACE_JVMTI_RETURN(jvmtiJlmDump);
-}
-
-
-#if (defined(J9VM_INTERP_NATIVE_SUPPORT)) 
-static jvmtiError JNICALL
-jvmtiAllowMethodInliningWithMethodEnterExit(jvmtiEnv* jvmti_env, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
-	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
-
-	Trc_JVMTI_jvmtiAllowMethodInliningWithMethodEnterExit_Entry(jvmti_env);
-
-	if (vm->jitConfig != NULL) {
-		if (enableDebugAttribute((J9JVMTIEnv *) jvmti_env, J9VM_DEBUG_ATTRIBUTE_ALLOW_INLINING_WITH_METHOD_ENTER_EXIT) == 0) {
-			rc = JVMTI_ERROR_NONE;
-		}
-	}
-	
-	TRACE_JVMTI_RETURN(jvmtiAllowMethodInliningWithMethodEnterExit);
-}
-
-
-static jvmtiError JNICALL
-jvmtiAllowDirectJNIWithMethodEnterExit(jvmtiEnv* jvmti_env, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
-	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
-
-	Trc_JVMTI_jvmtiAllowDirectJNIWithMethodEnterExit_Entry(jvmti_env);
-
-	if (vm->jitConfig != NULL) {
-		if (enableDebugAttribute((J9JVMTIEnv *) jvmti_env, J9VM_DEBUG_ATTRIBUTE_ALLOW_DIRECT_JNI_WITH_METHOD_ENTER_EXIT) == 0) {
-			rc = JVMTI_ERROR_NONE;
-		}
-	}
-	
-	TRACE_JVMTI_RETURN(jvmtiAllowDirectJNIWithMethodEnterExit);
-}
-#endif /* J9VM_INTERP_NATIVE_SUPPORT */
-
-static jvmtiError JNICALL
-jvmtiSetVmAndCompilingControlOptions(jvmtiEnv* jvmti_env, jint option, ...)
-{
-	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
-
-	Trc_JVMTI_jvmtiSetVmAndCompilingControlOptions_Entry(jvmti_env, option);
-
-	ENSURE_PHASE_ONLOAD(jvmti_env);
-
-	switch (option) {
-		case COM_IBM_ENABLE_SELECTIVE_METHOD_ENTRY_EXIT_NOTIFICATION:
-				rc = jvmtiFlagSet (jvmti_env, (UDATA) J9JVMTIENV_FLAG_SELECTIVE_NOTIFY_ENTRY_EXIT);
-				break;
-		default:
-				 rc = JVMTI_ERROR_ILLEGAL_ARGUMENT;
-				 break;
-	}
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiSetVmAndCompilingControlOptions);
-}
-
-static jvmtiError
-jvmtiFlagSet(jvmtiEnv* env, UDATA flag)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
-	J9JVMTIEnv * j9env = (J9JVMTIEnv *) env;
-	J9JVMTIData * jvmtiData = vm->jvmtiData;
-	jvmtiError rc = JVMTI_ERROR_NONE;
-
-	if (flag == (UDATA) J9JVMTIENV_FLAG_SELECTIVE_NOTIFY_ENTRY_EXIT) {
-		/* Need to check the state of other flags for selective method entry/exit */
-
-		omrthread_monitor_enter(vm->runtimeFlagsMutex);
-		if (jvmtiData->flags & J9JVMTI_FLAG_NON_SELECTIVE_METHOD_ENTRY_EXIT) {
-			/* The non-selective flag is already set, cannot set the selective one */
-			rc = JVMTI_ERROR_NOT_AVAILABLE;						
-		} else {
-			/* It is not set, so we can set the runtimeFlags and enable the flag in requiredDebugAttributes
-			   if the requredDebugAttributes hook is not dispatched already */
-			if (enableDebugAttribute(j9env, J9VM_DEBUG_ATTRIBUTE_SELECTIVE_METHOD_ENTER_EXIT) == 0) {
-				vm->runtimeFlags |= J9_RUNTIME_EXTENDED_METHOD_BLOCK;
-			} else {
-				/* enableDebugAttribute failed */
-				rc = JVMTI_ERROR_NOT_AVAILABLE;
-			}
-		}
-		omrthread_monitor_exit(vm->runtimeFlagsMutex);
-	}   
-
-	/* Do the flag change atomically, if still OK to to it */
-
-	if (rc == JVMTI_ERROR_NONE) {
-		omrthread_monitor_enter(j9env->mutex);
-		j9env->flags |= flag;
-		omrthread_monitor_exit(j9env->mutex);
-	}
-
-	return rc;
-}
-
-static jvmtiError JNICALL
-jvmtiSetMethodSelectiveEntryExitNotification(jvmtiEnv* env, jmethodID mid, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
-	J9JVMTIData * jvmtiData = J9JVMTI_DATA_FROM_VM(vm);
-	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
-
-	Trc_JVMTI_jvmtiSetMethodSelectiveEntryExitNotification_Entry(env);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(env);
-	ENSURE_NON_NULL(mid);
-
-	if (jvmtiData->requiredDebugAttributes & J9VM_DEBUG_ATTRIBUTE_SELECTIVE_METHOD_ENTER_EXIT) {
-		J9Method * method = ((J9JNIMethodID *)mid)->method;
-		U_8 * ptr_mflags = fetchMethodExtendedFlagsPointer(method);
-
-		setExtendedMethodFlags(vm, ptr_mflags,  J9_JVMTI_METHOD_SELECTIVE_ENTRY_EXIT);
-		rc = JVMTI_ERROR_NONE;
-	}
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiSetMethodSelectiveEntryExitNotification);
-}
-
-static jvmtiError JNICALL
-jvmtiClearMethodSelectiveEntryExitNotification(jvmtiEnv* env, jmethodID mid, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
-	J9JVMTIData * jvmtiData = J9JVMTI_DATA_FROM_VM(vm);
-	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
-
-	Trc_JVMTI_jvmtiClearMethodSelectiveEntryExitNotification_Entry(env);
-
-	ENSURE_PHASE_ONLOAD_OR_LIVE(env);
-	ENSURE_NON_NULL(mid);
-
-	if (jvmtiData->requiredDebugAttributes & J9VM_DEBUG_ATTRIBUTE_SELECTIVE_METHOD_ENTER_EXIT) {
-		J9Method * method = ((J9JNIMethodID *)mid)->method;
-		U_8 * ptr_mflags = fetchMethodExtendedFlagsPointer(method);
-
-		clearExtendedMethodFlags(vm, ptr_mflags,  J9_JVMTI_METHOD_SELECTIVE_ENTRY_EXIT);
-		rc = JVMTI_ERROR_NONE;
-	}
-
-done:
-	TRACE_JVMTI_RETURN(jvmtiClearMethodSelectiveEntryExitNotification);
-}
-
-static jvmtiError JNICALL
-jvmtiSetExtendedEventNotificationMode(jvmtiEnv* env, jint mode, jint extension_event_index, jthread event_thread, ...)
-{
-	J9JVMTIEnv * j9env = (J9JVMTIEnv *) env;
-	J9JavaVM * vm = j9env->vm;
-	J9VMThread * currentThread;
-	jvmtiError rc;
-
-	Trc_JVMTI_jvmtiSetExtendedEventNotificationMode_Entry(env);
-
-	rc = getCurrentVMThread(vm, &currentThread);
-	if (rc == JVMTI_ERROR_NONE) {
-		vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
-
-		/* Disallow certain events at the thread level */
-
-#if defined (J9VM_INTERP_NATIVE_SUPPORT)
-		switch(extension_event_index) {
-			case J9JVMTI_EVENT_COM_IBM_COMPILING_START:
-			case J9JVMTI_EVENT_COM_IBM_COMPILING_END:
-				if (event_thread != NULL) {
-					JVMTI_ERROR(JVMTI_ERROR_ILLEGAL_ARGUMENT);
-				}
-		}
-#endif
-
-		rc = setEventNotificationMode(j9env, currentThread, mode, extension_event_index, event_thread,
-			J9JVMTI_LOWEST_EXTENSION_EVENT, J9JVMTI_HIGHEST_EXTENSION_EVENT);
-
-done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
-	}
-
-	TRACE_JVMTI_RETURN(jvmtiSetExtendedEventNotificationMode);
 }
 
 static jvmtiError JNICALL
@@ -1975,6 +1436,7 @@ jvmtiGetOSThreadID(jvmtiEnv* jvmti_env, jthread thread, jlong * threadid_ptr, ..
 	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
 	jvmtiError rc;
 	J9VMThread * currentThread;
+	jlong rv_threadid = 0;
 
 	Trc_JVMTI_jvmtiGetOSThreadID_Entry(jvmti_env);
 
@@ -1989,96 +1451,18 @@ jvmtiGetOSThreadID(jvmtiEnv* jvmti_env, jthread thread, jlong * threadid_ptr, ..
 
 		rc = getVMThread(currentThread, thread, &targetThread, TRUE, TRUE);
 		if (rc == JVMTI_ERROR_NONE) {
-			*threadid_ptr = (jlong) omrthread_get_osId(targetThread->osThread);
+			rv_threadid = (jlong) omrthread_get_osId(targetThread->osThread);
 			releaseVMThread(currentThread, targetThread);
 		}
 done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
+	if (NULL != threadid_ptr) {
+		*threadid_ptr = rv_threadid;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetOSThreadID);
 }
-
-static jvmtiError JNICALL
-jvmtiSignalAsyncEvent(jvmtiEnv* jvmti_env, jthread thread, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
-	jvmtiError rc;
-	J9VMThread * currentThread;
-
-	Trc_JVMTI_jvmtiSignalAsyncEvent_Entry(jvmti_env);
-
-	rc = getCurrentVMThread(vm, &currentThread);
-	if (rc == JVMTI_ERROR_NONE) {
-		J9VMThread * targetThread = NULL;
-
-		vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
-
-		ENSURE_PHASE_START_OR_LIVE(jvmti_env);
-
-		if (thread != NULL) {
-			rc = getVMThread(currentThread, thread, &targetThread, FALSE, TRUE);
-		}
-		if (rc == JVMTI_ERROR_NONE) {
-			switch (vm->internalVMFunctions->J9SignalAsyncEvent(vm, targetThread, ((J9JVMTIEnv *) jvmti_env)->handlerKey)) {
-				case 0:
-					break;
-				case J9ASYNC_ERROR_INVALID_HANDLER_KEY:
-					rc = JVMTI_ERROR_ACCESS_DENIED;
-					break;
-				default:
-					rc = JVMTI_ERROR_INTERNAL;
-					break;
-			}
-			releaseVMThread(currentThread, targetThread);
-		}
-done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
-	}
-
-	TRACE_JVMTI_RETURN(jvmtiSignalAsyncEvent);
-}
-
-static jvmtiError JNICALL
-jvmtiCancelAsyncEvent(jvmtiEnv* jvmti_env, jthread thread, ...)
-{
-	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
-	jvmtiError rc;
-	J9VMThread * currentThread;
-
-	Trc_JVMTI_jvmtiCancelAsyncEvent_Entry(jvmti_env);
-
-	rc = getCurrentVMThread(vm, &currentThread);
-	if (rc == JVMTI_ERROR_NONE) {
-		J9VMThread * targetThread = NULL;
-
-		vm->internalVMFunctions->internalEnterVMFromJNI(currentThread);
-
-		ENSURE_PHASE_START_OR_LIVE(jvmti_env);
-
-		if (thread != NULL) {
-			rc = getVMThread(currentThread, thread, &targetThread, FALSE, TRUE);
-		}
-		if (rc == JVMTI_ERROR_NONE) {
-			switch (vm->internalVMFunctions->J9CancelAsyncEvent(vm, targetThread, ((J9JVMTIEnv *) jvmti_env)->handlerKey)) {
-				case 0:
-					break;
-				case J9ASYNC_ERROR_INVALID_HANDLER_KEY:
-					rc = JVMTI_ERROR_ACCESS_DENIED;
-					break;
-				default:
-					rc = JVMTI_ERROR_INTERNAL;
-					break;
-			}
-			releaseVMThread(currentThread, targetThread);
-		}
-done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
-	}
-
-	TRACE_JVMTI_RETURN(jvmtiCancelAsyncEvent);
-}
-
 
 static jvmtiError JNICALL
 jvmtiGetStackTraceExtended(jvmtiEnv* env,
@@ -2092,6 +1476,7 @@ jvmtiGetStackTraceExtended(jvmtiEnv* env,
 	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
 	jvmtiError rc;
 	J9VMThread * currentThread;
+	jint rv_count = 0;
 
 	Trc_JVMTI_jvmtiGetStackTraceExtended_Entry(env);
 
@@ -2111,15 +1496,18 @@ jvmtiGetStackTraceExtended(jvmtiEnv* env,
 		if (rc == JVMTI_ERROR_NONE) {
 			vm->internalVMFunctions->haltThreadForInspection(currentThread, targetThread);
 
-			rc = jvmtiInternalGetStackTraceExtended(env, type, currentThread, targetThread, start_depth, (UDATA) max_frame_count, frame_buffer, count_ptr);
+			rc = jvmtiInternalGetStackTraceExtended(env, type, currentThread, targetThread, start_depth, (UDATA) max_frame_count, frame_buffer, &rv_count);
 
 			vm->internalVMFunctions->resumeThreadForInspection(currentThread, targetThread);
 			releaseVMThread(currentThread, targetThread);
 		}
 done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
+	if (NULL != count_ptr) {
+		*count_ptr = rv_count;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetStackTraceExtended);
 }
 
@@ -2135,6 +1523,8 @@ jvmtiGetAllStackTracesExtended(jvmtiEnv* env,
 	jvmtiError rc;
 	J9VMThread * currentThread;
 	PORT_ACCESS_FROM_JAVAVM(vm);
+	void *rv_stack_info = NULL;
+	jint rv_thread_count = 0;
 
 	Trc_JVMTI_jvmtiGetAllStackTracesExtended_Entry(env);
 
@@ -2184,16 +1574,22 @@ jvmtiGetAllStackTracesExtended(jvmtiEnv* env,
 				}
 			} while ((targetThread = targetThread->linkNext) != vm->mainThread);
 
-			*((jvmtiStackInfoExtended**)stack_info_ptr) = stackInfo;
-			*thread_count_ptr = (jint) threadCount;
+			rv_stack_info = stackInfo;
+			rv_thread_count = (jint) threadCount;
 		}
 fail:
 		vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
 
 done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
+	if (NULL != stack_info_ptr) {
+		*stack_info_ptr = rv_stack_info;
+	}
+	if (NULL != thread_count_ptr) {
+		*thread_count_ptr = rv_thread_count;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetAllStackTracesExtended);
 }
 
@@ -2210,6 +1606,7 @@ jvmtiGetThreadListStackTracesExtended(jvmtiEnv* env,
 	jvmtiError rc;
 	J9VMThread * currentThread;
 	PORT_ACCESS_FROM_JAVAVM(vm);
+	void *rv_stack_info = NULL;
 
 	Trc_JVMTI_jvmtiGetThreadListStackTracesExtended_Entry(env);
 
@@ -2266,15 +1663,18 @@ deallocate:
 				currentFrameInfo += max_frame_count;
 			}
 
-			*((jvmtiStackInfoExtended**)stack_info_ptr) = stackInfo;
+			rv_stack_info = stackInfo;
 		}
 fail:
 		vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
 
 done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
+	if (NULL != stack_info_ptr) {
+		*stack_info_ptr = rv_stack_info;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetThreadListStackTracesExtended);
 }
 
@@ -2428,15 +1828,19 @@ jvmtiGetHeapFreeMemory(jvmtiEnv* jvmti_env, jlong* heapFree_ptr, ...)
 {
 	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
 	jvmtiError rc;
+	jlong rv_heapFree = 0;
 
 	Trc_JVMTI_jvmtiGetHeapFreeMemory_Entry(jvmti_env);
 
 	ENSURE_PHASE_START_OR_LIVE(jvmti_env);
 	ENSURE_NON_NULL(heapFree_ptr);
-	*heapFree_ptr = vm->memoryManagerFunctions->j9gc_heap_free_memory(vm);
+	rv_heapFree = vm->memoryManagerFunctions->j9gc_heap_free_memory(vm);
 	rc = JVMTI_ERROR_NONE;
 	
 done:
+	if (NULL != heapFree_ptr) {
+		*heapFree_ptr = rv_heapFree;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetHeapFreeMemory);
 }
 
@@ -2445,15 +1849,19 @@ jvmtiGetHeapTotalMemory(jvmtiEnv* jvmti_env, jlong* heapTotal_ptr, ...)
 {
 	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
 	jvmtiError rc;
+	jlong rv_heapTotal = 0;
 
 	Trc_JVMTI_jvmtiGetHeapTotalMemory_Entry(jvmti_env);
 
 	ENSURE_PHASE_START_OR_LIVE(jvmti_env);
 	ENSURE_NON_NULL(heapTotal_ptr);
-	*heapTotal_ptr = vm->memoryManagerFunctions->j9gc_heap_total_memory(vm);
+	rv_heapTotal = vm->memoryManagerFunctions->j9gc_heap_total_memory(vm);
 	rc = JVMTI_ERROR_NONE;
 	
 done:
+	if (NULL != heapTotal_ptr) {
+		*heapTotal_ptr = rv_heapTotal;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetHeapTotalMemory);
 }
 
@@ -2498,6 +1906,9 @@ iterateSharedCachesCallback(J9JavaVM *vm, J9SharedCacheInfo *event_data, void *u
 	if (COM_IBM_ITERATE_SHARED_CACHES_VERSION_4 <= userdata->version) {
 		cacheInfo.softMaxBytes = ((UDATA)-1 == event_data->softMaxBytes) ? (jlong) -1 : (jlong) event_data->softMaxBytes;
 	}
+	if (COM_IBM_ITERATE_SHARED_CACHES_VERSION_5 <= userdata->version) {
+		cacheInfo.layer = (jint) event_data->layer;
+	}
 	if (JNI_OK != userdata->callback(userdata->env, &cacheInfo, userdata->userdata)) {
 		return -1;
 	}
@@ -2528,10 +1939,8 @@ jvmtiIterateSharedCaches(jvmtiEnv *env,
 	
 	Trc_JVMTI_jvmtiIterateSharedCaches_Entry(env, callback, user_data);
 	
-	if ((COM_IBM_ITERATE_SHARED_CACHES_VERSION_1 != version)
-		&& (COM_IBM_ITERATE_SHARED_CACHES_VERSION_2 != version)
-		&& (COM_IBM_ITERATE_SHARED_CACHES_VERSION_3 != version)
-		&& (COM_IBM_ITERATE_SHARED_CACHES_VERSION_4 != version)
+	if ((COM_IBM_ITERATE_SHARED_CACHES_VERSION_1 > version)
+		|| (COM_IBM_ITERATE_SHARED_CACHES_VERSION_5 < version)
 	) {
 		rc = JVMTI_ERROR_UNSUPPORTED_VERSION;
 		goto done;
@@ -2583,6 +1992,7 @@ jvmtiDestroySharedCache(jvmtiEnv *env,
 	J9JavaVM *vm = JAVAVM_FROM_ENV(env);
 	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
 	IDATA sharedCacheRC = 0;
+	jint rv_internalErrorCode = 0;
 	
 	Trc_JVMTI_jvmtiDestroySharedCache_Entry(env, name);
 
@@ -2604,9 +2014,7 @@ jvmtiDestroySharedCache(jvmtiEnv *env,
 	}
 
 	sharedCacheRC = vm->sharedCacheAPI->destroySharedCache(vm, cacheDir, name, cacheType, useCommandLineValues);
-	if (NULL != internalErrorCode) {
-		*internalErrorCode = (jint)sharedCacheRC;
-	}
+	rv_internalErrorCode = (jint)sharedCacheRC;
 	if (COM_IBM_DESTROYED_ALL_CACHE != sharedCacheRC) {
 		rc = JVMTI_ERROR_INTERNAL;
 		goto done;
@@ -2616,6 +2024,9 @@ jvmtiDestroySharedCache(jvmtiEnv *env,
 done:
 #endif /* J9VM_OPT_SHARED_CLASSES */
 
+	if (NULL != internalErrorCode) {
+		*internalErrorCode = rv_internalErrorCode;
+	}
 	TRACE_JVMTI_RETURN(jvmtiDestroySharedCache);
 }
 
@@ -2650,7 +2061,7 @@ jvmtiRemoveAllTags(jvmtiEnv* jvmti_env, ...)
 /*
  * Struct to insulate trace from jvmti types
  */
-typedef struct userDataWrapper {
+typedef struct UserDataWrapper {
 	J9PortLibrary			*portlib;
 	jvmtiTraceSubscriber	 subscriber;
 	jvmtiTraceAlarm			 alarm;
@@ -2729,6 +2140,7 @@ jvmtiRegisterTraceSubscriber(jvmtiEnv* env, char *description, jvmtiTraceSubscri
 	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
 	jvmtiError rc = JVMTI_ERROR_INVALID_ENVIRONMENT;
 	J9VMThread * currentThread;
+	void *rv_subscriptionID = NULL;
 
 	RasGlobalStorage *j9ras;
 	UtInterface *uteInterface;
@@ -2771,7 +2183,7 @@ jvmtiRegisterTraceSubscriber(jvmtiEnv* env, char *description, jvmtiTraceSubscri
 		wrapper->env = env;
 
 		/* Pass option to the trace engine */
-		result = uteInterface->server->RegisterRecordSubscriber( UT_THREAD_FROM_VM_THREAD(currentThread), description, subscriberWrapper, alarmWrapper, wrapper, (struct UtTraceBuffer *)-1, NULL, (UtSubscription**)subscriptionID, TRUE);
+		result = uteInterface->server->RegisterRecordSubscriber( UT_THREAD_FROM_VM_THREAD(currentThread), description, subscriberWrapper, alarmWrapper, wrapper, (struct UtTraceBuffer *)-1, NULL, (UtSubscription**)&rv_subscriptionID, TRUE);
 
 		/* Map back to JVMTI error code */
 		switch (result) {
@@ -2791,7 +2203,10 @@ jvmtiRegisterTraceSubscriber(jvmtiEnv* env, char *description, jvmtiTraceSubscri
 		}
 	}
 
-	done:
+done:
+	if (NULL != subscriptionID) {
+		*subscriptionID = rv_subscriptionID;
+	}
 	TRACE_JVMTI_RETURN(jvmtiRegisterTraceSubscriber);
 }
 
@@ -2942,6 +2357,8 @@ jvmtiGetTraceMetadata(jvmtiEnv *env, void **data, jint *length, ...)
 	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
 	jvmtiError rc = JVMTI_ERROR_INVALID_ENVIRONMENT;
 	J9VMThread * currentThread;
+	void *rv_data = NULL;
+	jint rv_length = 0;
 	
 	RasGlobalStorage *j9ras;
 	UtInterface *uteInterface;
@@ -2965,7 +2382,7 @@ jvmtiGetTraceMetadata(jvmtiEnv *env, void **data, jint *length, ...)
 	if ( uteInterface && uteInterface->server ) {
 	
 		/* Pass option to the trace engine */
-		omr_error_t result = uteInterface->server->GetTraceMetadata(data, length);
+		omr_error_t result = uteInterface->server->GetTraceMetadata(&rv_data, &rv_length);
 	
 		/* Map back to JVMTI error code */
 		switch (result) {
@@ -2982,7 +2399,13 @@ jvmtiGetTraceMetadata(jvmtiEnv *env, void **data, jint *length, ...)
 		}
 	}
 	
-	done:
+done:
+	if (NULL != data) {
+		*data = rv_data;
+	}
+	if (NULL != length) {
+		*length = rv_length;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetTraceMetadata);
 }
 
@@ -3079,7 +2502,7 @@ jvmtiGetMethodAndClassNames_verifyRamMethod(J9JavaVM * vm, J9Method * ramMethod)
  * 	The user is responsible for passing in a ramMethods array containing ram method pointers they wish to query. 
  *	The ramMethodCount argument contains the count of passed in ram method pointers.
  *
- *	The ramMethodDataDescriptors is a buffer large enough to accomodate ramMethodCount number of jvmtiExtensionRamMethodData
+ *	The ramMethodDataDescriptors is a buffer large enough to accommodate ramMethodCount number of jvmtiExtensionRamMethodData
  *	structures. It is written to by this extension as ram method pointers are processed. The first jvmtiExtensionRamMethodData structure
  *	written to the ramMethodDataDescriptors corresponds to the first ram method pointer in the ramMethods array and so on. Ram method
  *	pointers that are detected to be no longer valid (e.g. class has been unloaded) will result in className and methodName pointers being 
@@ -3088,7 +2511,7 @@ jvmtiGetMethodAndClassNames_verifyRamMethod(J9JavaVM * vm, J9Method * ramMethod)
  *
  *	The ramMethodStrings serves as a buffer to copy class, method and package name strings for valid ram method pointers. The 
  *	jvmtiExtensionRamMethodData structures are initialized with pointers into this array. Each string is null terminated. Care should be
- *	taken to pass in a large enough buffer to accomodate strings for all requested ram methods. In case the buffer is not sufficiently 
+ *	taken to pass in a large enough buffer to accommodate strings for all requested ram methods. In case the buffer is not sufficiently 
  *	large, the extension will stop processing any further ram methods pointers and return whatever has been processed up to that point.
  *
  *  ramMethodStringsSize is used by the user to specify the size of ramMethodStrings. If not enough space was provided, this 
@@ -3153,7 +2576,7 @@ jvmtiGetMethodAndClassNames(jvmtiEnv *jvmti_env,  void * ramMethods, jint ramMet
 				   
 				totalStringsLength += length;
 
-				/* got enough space to accomodate this ramMethod's strings? */
+				/* got enough space to accommodate this ramMethod's strings? */
 
 				if (stringsSize >= length) {
 
@@ -3204,7 +2627,7 @@ jvmtiGetMethodAndClassNames(jvmtiEnv *jvmti_env,  void * ramMethods, jint ramMet
 
 		*ramMethodStringsSize = (jint)totalStringsLength;
 
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
 done:
@@ -3212,42 +2635,6 @@ done:
 	TRACE_JVMTI_RETURN(jvmtiGetMethodAndClassNames);
 }
 
-
-jvmtiError
-isOKToEnableMethodEntryExit(jvmtiEnv* env)
-{	
-	J9JVMTIEnv * j9env = (J9JVMTIEnv *) env;
-	J9JavaVM * vm = j9env->vm;
-	J9JVMTIData * jvmtiData = J9JVMTI_DATA_FROM_VM(vm);
-	jvmtiError rc = JVMTI_ERROR_NONE;
-
-	/* The notification can be enabled if:
-	 a)  the selective mode is not set - this assumes we want the regular, non-selective mode
-	 b)  the selective mode is set and we asked for it previously 
-	 If the selective mode is set and we did not ask for it
-	 (i.e., the local j9env flag J9JVMTIENV_FLAG_SELECTIVE_NOTIFY_ENTRY_EXIT is not set),
-	 the function returns an error.
-	 We use vm->runtimeFlagsMutex here since the same mutex is used in jvmtiFlagSet().
-	*/
-
-	omrthread_monitor_enter(vm->runtimeFlagsMutex);
-
-	if (jvmtiData->requiredDebugAttributes & J9VM_DEBUG_ATTRIBUTE_SELECTIVE_METHOD_ENTER_EXIT) {
-
-		omrthread_monitor_enter(j9env->mutex);
-		if (!(j9env->flags & J9JVMTIENV_FLAG_SELECTIVE_NOTIFY_ENTRY_EXIT)) {
-			/* The selective mode is set, but we do not want it */
-			rc = JVMTI_ERROR_ACCESS_DENIED;
-		}
-		omrthread_monitor_exit(j9env->mutex);
-	} else {
-		jvmtiData->flags |= J9JVMTI_FLAG_NON_SELECTIVE_METHOD_ENTRY_EXIT;
-	}
-
-	omrthread_monitor_exit(vm->runtimeFlagsMutex);
-
-	return rc;
-}
 
 /*
  * Writes a string containing the value of the internal log options expressed as text.
@@ -3272,15 +2659,20 @@ static jvmtiError JNICALL
 jvmtiQueryVmLogOptions(jvmtiEnv *jvmti_env, jint buffer_size, void *options, jint *data_size_ptr, ...) {
 	J9JavaVM * vm = JAVAVM_FROM_ENV(jvmti_env);
 	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
+	jint rv_data_size = 0;
 
 	Trc_JVMTI_jvmtiQueryVmLogOptions_Entry(jvmti_env);
 
 	ENSURE_PHASE_NOT_DEAD(jvmti_env);
+	ENSURE_NON_NULL(data_size_ptr);
 	
 	/* request log options */
-	rc = vm->internalVMFunctions->queryLogOptions(vm, buffer_size, options, (I_32 *)data_size_ptr);
+	rc = vm->internalVMFunctions->queryLogOptions(vm, buffer_size, options, (I_32 *)&rv_data_size);
 
 done:
+	if (NULL != data_size_ptr) {
+		*data_size_ptr = rv_data_size;
+	}
 	TRACE_JVMTI_RETURN(jvmtiQueryVmLogOptions);
 }
 
@@ -3322,6 +2714,7 @@ static jvmtiError JNICALL
 jvmtiJlmDumpStats(jvmtiEnv* env, void ** dump_info, jint dump_format, ...)
 {
 	jvmtiError rc = JVMTI_ERROR_NOT_AVAILABLE;
+	void *rv_dump_info = NULL;
 
 	Trc_JVMTI_jvmtiJlmDumpStats_Entry(env);
 	ENSURE_PHASE_LIVE(env);
@@ -3333,10 +2726,13 @@ jvmtiJlmDumpStats(jvmtiEnv* env, void ** dump_info, jint dump_format, ...)
     }
 
 #if defined(OMR_THR_JLM)
-	rc = jvmtiJlmDumpHelper(env, dump_info, dump_format);		
+	rc = jvmtiJlmDumpHelper(env, &rv_dump_info, dump_format);		
 #endif /* OMR_THR_JLM */
 
 done:
+	if (NULL != dump_info) {
+		*dump_info = rv_dump_info;
+	}
 	TRACE_JVMTI_RETURN(jvmtiJlmDumpStats);
 }
 
@@ -3387,7 +2783,7 @@ jvmtiJlmDumpHelper(jvmtiEnv* env, void ** dump_info, jint dump_format)
 			omrthread_lib_unlock(self);
 		}
 		vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 #endif
 	return rc;
@@ -3542,7 +2938,7 @@ static void fillInCategoryDeepCounters(jvmtiMemoryCategory * category)
   * JVMTI_ERROR_UNSUPPORTED_VERSION - Unsupported version of jvmtiMemoryCategory
   * JVMTI_ERROR_ILLEGAL_ARGUMENT - Illegal argument (categories_buffer, count_ptr & total_categories_ptr are all NULL)
   * JVMTI_ERROR_INVALID_ENVIRONMENT - Invalid JVMTI environment
-  * JVMTI_ERROR_OUT_OF_MEMORY - Memory category data was truncated becasue category_buffer/max_categories was not large enough
+  * JVMTI_ERROR_OUT_OF_MEMORY - Memory category data was truncated because category_buffer/max_categories was not large enough
   *
   */
 static jvmtiError JNICALL
@@ -3553,6 +2949,8 @@ jvmtiGetMemoryCategories(jvmtiEnv* env, jint version, jint max_categories, jvmti
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	OMRMemCategoryWalkState walkState;
 	struct jvmtiGetMemoryCategoriesState userData;
+	jint rv_written_count = 0;
+	jint rv_total_categories = 0;
 
 	Trc_JVMTI_jvmtiGetMemoryCategories_Entry(env, version, max_categories, categories_buffer, written_count_ptr, total_categories_ptr);
 
@@ -3653,14 +3051,14 @@ jvmtiGetMemoryCategories(jvmtiEnv* env, jint version, jint max_categories, jvmti
 	}
 
 	if (written_count_ptr) {
-		*written_count_ptr = userData.written_count;
+		rv_written_count = userData.written_count;
 		if (JVMTI_ERROR_NOT_AVAILABLE == rc) {
 			rc = JVMTI_ERROR_NONE;
 		}
 	}
 
 	if (total_categories_ptr) {
-		*total_categories_ptr = (jint)userData.total_categories;
+		rv_total_categories = (jint)userData.total_categories;
 		if (JVMTI_ERROR_NOT_AVAILABLE == rc) {
 			rc = JVMTI_ERROR_NONE;
 		}
@@ -3668,6 +3066,12 @@ jvmtiGetMemoryCategories(jvmtiEnv* env, jint version, jint max_categories, jvmti
 
 	Trc_JVMTI_jvmtiGetMemoryCategories_Exit(rc);
 
+	if (NULL != written_count_ptr) {
+		*written_count_ptr = rv_written_count;
+	}
+	if (NULL != total_categories_ptr) {
+		*total_categories_ptr = rv_total_categories;
+	}
 	return rc;
 }
 
@@ -3743,6 +3147,7 @@ jvmtiRegisterVerboseGCSubscriber(jvmtiEnv *env, char *description, jvmtiVerboseG
 	J9MemoryManagerVerboseInterface *verboseFunctions;
 	VerboseGCSubscriberData* subscriberData;
 	IDATA hookRC;
+	void *rv_subscriptionID = NULL;
 
 	PORT_ACCESS_FROM_JAVAVM(vm);
 
@@ -3799,9 +3204,12 @@ jvmtiRegisterVerboseGCSubscriber(jvmtiEnv *env, char *description, jvmtiVerboseG
 	}
 	rc = JVMTI_ERROR_NONE;
 
-	*subscriptionID = subscriberData;
+	rv_subscriptionID = subscriberData;
 	
 done:
+	if (NULL != subscriptionID) {
+		*subscriptionID = rv_subscriptionID;
+	}
 	TRACE_JVMTI_RETURN(jvmtiRegisterVerboseGCSubscriber);
 }
 
@@ -3848,6 +3256,7 @@ jvmtiGetJ9vmThread(jvmtiEnv *env, jthread thread, void **vmThreadPtr, ...)
 	J9JavaVM *vm = JAVAVM_FROM_ENV(env);
 	jvmtiError rc;
 	J9VMThread *currentThread;
+	void *rv_vmThread = NULL;
 
 	Trc_JVMTI_jvmtiGetJ9vmThread_Entry(env);
 
@@ -3863,13 +3272,16 @@ jvmtiGetJ9vmThread(jvmtiEnv *env, jthread thread, void **vmThreadPtr, ...)
 
 		rc = getVMThread(currentThread, thread, &targetThread, TRUE, TRUE);
 		if (rc == JVMTI_ERROR_NONE) {
-			*vmThreadPtr = targetThread;
+			rv_vmThread = targetThread;
 			releaseVMThread(currentThread, targetThread);
 		}
 done:
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
+	if (NULL != vmThreadPtr) {
+		*vmThreadPtr = rv_vmThread;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetJ9vmThread);
 }
 
@@ -3877,6 +3289,7 @@ static jvmtiError JNICALL
 jvmtiGetJ9method(jvmtiEnv *env, jmethodID mid, void **j9MethodPtr, ...)
 {
 	jvmtiError rc = JVMTI_ERROR_NONE;
+	void *rv_j9Method = NULL;
 
 	Trc_JVMTI_jvmtiGetJ9method_Entry(env);
 
@@ -3885,9 +3298,12 @@ jvmtiGetJ9method(jvmtiEnv *env, jmethodID mid, void **j9MethodPtr, ...)
 	ENSURE_JMETHODID_NON_NULL(mid);
 	ENSURE_NON_NULL(j9MethodPtr);
 
-	*j9MethodPtr = ((J9JNIMethodID *) mid)->method;
+	rv_j9Method = ((J9JNIMethodID *) mid)->method;
 
 done:
+	if (NULL != j9MethodPtr) {
+		*j9MethodPtr = rv_j9Method;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetJ9method);
 }
 
@@ -3942,7 +3358,7 @@ jvmtiRegisterTracePointSubscriber(jvmtiEnv* env, char *description, jvmtiTraceSu
 
 		PORT_ACCESS_FROM_JAVAVM(vm);
 
-		/* Create and initialise wrapper structure. This is used in the function wrappers for the user callbacks */
+		/* Create and initialize wrapper structure. This is used in the function wrappers for the user callbacks */
 		UserDataWrapper *wrapper = j9mem_allocate_memory(sizeof(UserDataWrapper), J9MEM_CATEGORY_JVMTI);
 		if (wrapper == NULL) {
 			rc = JVMTI_ERROR_OUT_OF_MEMORY;

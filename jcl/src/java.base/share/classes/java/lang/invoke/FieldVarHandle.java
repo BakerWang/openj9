@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar19-SE]*/
+/*[INCLUDE-IF Sidecar19-SE & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2016, 2017 IBM Corp. and others
+ * Copyright (c) 2016, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,10 +18,14 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
+/*[IF Java12]*/
+import java.lang.constant.ClassDesc;
+import java.util.Optional;
+/*[ENDIF] Java12 */
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import static java.lang.invoke.MethodType.*;
@@ -31,8 +35,12 @@ import com.ibm.oti.vm.VM;
 
 abstract class FieldVarHandle extends VarHandle {
 	final long vmslot;
-	final Class<?> definingClass;
 	final String fieldName;
+
+	/* definingClass cannot be a final field since it is modified twice, once in
+	 * Java code and once in native code.
+	 */
+	Class<?> definingClass;
 
 	/**
 	 * Constructs a VarHandle referencing a field.
@@ -46,12 +54,15 @@ abstract class FieldVarHandle extends VarHandle {
 	 * @param handleTable The array of MethodHandles implementing the AccessModes.
 	 * @param typeTable The VarHandle instance specific MethodTypes used to validate invocations.
 	 */
-	FieldVarHandle(Class<?> lookupClass, String fieldName, Class<?> fieldType, Class<?> accessClass, boolean isStatic, Class<?>[] coordinateTypes, MethodHandle[] handleTable, MethodType[] typeTable) {
-		super(fieldType, coordinateTypes, handleTable, typeTable, 0);
+	FieldVarHandle(Class<?> lookupClass, String fieldName, Class<?> fieldType, Class<?> accessClass, boolean isStatic, Class<?>[] coordinateTypes, MethodHandle[] handleTable) {
+		super(fieldType, coordinateTypes, handleTable, 0);
 		this.definingClass = lookupClass;
 		this.fieldName = fieldName;
 		int header = (isStatic ? 0 : VM.OBJECT_HEADER_SIZE);
-		this.vmslot = lookupField(definingClass, fieldName, MethodType.getBytecodeStringName(fieldType), fieldType, isStatic, accessClass) + header;
+
+		/* The native lookupField method also modifies the definingClass field. */
+		this.vmslot = lookupField(definingClass, fieldName, MethodTypeHelper.getBytecodeStringName(fieldType), fieldType, isStatic, accessClass) + header;
+
 		checkSetterFieldFinality(handleTable);
 	}
 	
@@ -64,8 +75,8 @@ abstract class FieldVarHandle extends VarHandle {
 	 * @param handleTable The array of MethodHandles implementing the AccessModes.
 	 * @param typeTable The VarHandle instance specific MethodTypes used to validate invocations.
 	 */
-	FieldVarHandle(Field field, boolean isStatic, Class<?>[] coordinateTypes, MethodHandle[] handleTable, MethodType[] typeTable) {
-		super(field.getType(), coordinateTypes, handleTable, typeTable, 0);
+	FieldVarHandle(Field field, boolean isStatic, Class<?>[] coordinateTypes, MethodHandle[] handleTable) {
+		super(field.getType(), coordinateTypes, handleTable, 0);
 		this.definingClass = field.getDeclaringClass();
 		this.fieldName = field.getName();
 		int header = (isStatic ? 0 : VM.OBJECT_HEADER_SIZE);
@@ -73,6 +84,24 @@ abstract class FieldVarHandle extends VarHandle {
 		checkSetterFieldFinality(handleTable);
 	}
 	
+	/*[IF Java12]*/
+	@Override
+	public Optional<VarHandleDesc> describeConstable() {
+		VarHandleDesc result = null;
+		Optional<ClassDesc> fieldTypeOp = fieldType.describeConstable();
+		Optional<ClassDesc> declaringClassOp = definingClass.describeConstable();
+
+		if (fieldTypeOp.isPresent() && declaringClassOp.isPresent()) {
+			if (this instanceof InstanceFieldVarHandle) {
+				result = VarHandleDesc.ofField(declaringClassOp.get(), fieldName, fieldTypeOp.get());
+			} else { /* static */
+				result = VarHandleDesc.ofStaticField(declaringClassOp.get(), fieldName, fieldTypeOp.get());
+			}
+		}
+		return Optional.ofNullable(result);
+	}
+	/*[ENDIF] Java12 */
+
 	/**
 	 * Checks whether the field referenced by this VarHandle, is final. 
 	 * If so, MethodHandles in the handleTable that represent access modes that may modify the field, 
@@ -84,14 +113,14 @@ abstract class FieldVarHandle extends VarHandle {
 		if (Modifier.isFinal(modifiers)) {
 			MethodHandle exceptionThrower;
 			try {
-				exceptionThrower = MethodHandles.Lookup.internalPrivilegedLookup.findStatic(FieldVarHandle.class, "finalityCheckFailedExceptionThrower", methodType(void.class));
+				exceptionThrower = MethodHandles.Lookup.IMPL_LOOKUP.findStatic(FieldVarHandle.class, "finalityCheckFailedExceptionThrower", methodType(void.class));
 			} catch (IllegalAccessException | NoSuchMethodException e) {
 				throw new InternalError(e);
 			}
 			for (AccessMode mode : AccessMode.values()) {
 				if (mode.isSetter) {
 					MethodHandle mh = handleTable[mode.ordinal()];
-					Class<?>[] args = mh.type.arguments;
+					Class<?>[] args = mh.type().ptypes();
 					handleTable[mode.ordinal()] = MethodHandles.dropArguments(exceptionThrower, 0, args);
 				}
 			}
@@ -112,7 +141,7 @@ abstract class FieldVarHandle extends VarHandle {
 	 * 
 	 * @param lookupClass The class where we start the lookup of the field
 	 * @param name The field name
-	 * @param signature Equivalent of the String returned by MethodType.getBytecodeStringName
+	 * @param signature Equivalent of the String returned by MethodTypeHelper.getBytecodeStringName
 	 * @param type The exact type of the field. This must match the signature.
 	 * @param isStatic A boolean value indicating whether the field is static.
 	 * @param accessClass The class being used to look up the field.
@@ -146,5 +175,9 @@ abstract class FieldVarHandle extends VarHandle {
 	@Override
 	final String getFieldName() {
 		return fieldName;
+	}
+
+	public MethodType accessModeTypeUncached(AccessMode accessMode) {
+		throw OpenJDKCompileStub.OpenJDKCompileStubThrowError();
 	}
 }

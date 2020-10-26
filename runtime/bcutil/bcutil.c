@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2016 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <stdlib.h>
@@ -127,7 +127,6 @@ bcutil_J9VMDllMain(J9JavaVM* vm, IDATA stage, void* reserved)
 	PORT_ACCESS_FROM_JAVAVM(vm);
 	VMI_ACCESS_FROM_JAVAVM((JavaVM*)vm);
 
-#define VERBOSE_DYNLOAD 8 																/* temp hack */
 #define BUFFERS_ALLOC_STAGE BYTECODE_TABLE_SET			/* defined separately to ensure dependencies below */
 
 	switch(stage) {
@@ -135,7 +134,7 @@ bcutil_J9VMDllMain(J9JavaVM* vm, IDATA stage, void* reserved)
 		/* Note that verbose support should have already been initialized in an earlier stage */
 		case BUFFERS_ALLOC_STAGE :
 			loadInfo = FIND_DLL_TABLE_ENTRY( THIS_DLL_NAME );
-			if (J2SE_VERSION(vm) >= J2SE_19) {
+			if (J2SE_VERSION(vm) >= J2SE_V11) {
 				rc = initJImageIntf(&jimageIntf, vm, PORTLIB);
 				if (J9JIMAGE_NO_ERROR != rc) {
 					loadInfo->fatalErrorStr = "failed to initialize JImage interface";
@@ -223,17 +222,27 @@ bcutil_J9VMDllMain(J9JavaVM* vm, IDATA stage, void* reserved)
     This function ignores surrogates and treats them as two separate three byte
     encodings.  This is valid.
 
+	The bit CFR_FOUND_CHARS_IN_EXTENDED_MUE_FORM is set in mueAsciiStatus if a
+	non-null UTF character is extended using modified UTF-8 (MUE)format,
+	similar to the null character. For classfile versions 48 and up, the JVM is
+	supposed to reject MUE characters.
+	The bit CFR_FOUND_SEPARATOR_IN_MUE_FORM is set in mueAsciiStatus if the
+	character '/' was found in MUE form, which is specifically
+	disallowed in class names even for classfile version 47 and lower.
+	If mueAsciiStatus is left NULL it is not used.
+
 	Returns compressed length or -1.
 */
 
 I_32
-j9bcutil_verifyCanonisizeAndCopyUTF8 (U_8 *dest, U_8 *source, U_32 length)
+j9bcutil_verifyCanonisizeAndCopyUTF8 (U_8 *dest, U_8 *source, U_32 length, U_8 *mueAsciiStatus)
 {
 	U_8 *originalDest = dest;
 	U_8 *originalSource = source;
 	U_8 *sourceEnd = source + length;
 	UDATA firstByte, nextByte, outWord, charLength, compression = 0;
 	I_32 result = -1;
+	U_8 mueStatus = 0;
 
 	Trc_BCU_verifyCanonisizeAndCopyUTF8_Entry(dest, source, length);
 
@@ -292,6 +301,10 @@ j9bcutil_verifyCanonisizeAndCopyUTF8 (U_8 *dest, U_8 *source, U_32 length)
 
 		/* Overwrite the multibyte UTF8 character only if shorter */
 		if ((outWord != 0) && (outWord < 0x80)) {
+			/* character '/' handled specially in class name utf8 */
+			if ((UDATA)'/' == outWord) {
+				mueStatus |= CFR_FOUND_SEPARATOR_IN_MUE_FORM;
+			}
 			/* One byte must be shorter in here */
 			dest = originalDest + (source - originalSource - charLength - compression);
 			*dest++ = (U_8) outWord;
@@ -307,7 +320,15 @@ j9bcutil_verifyCanonisizeAndCopyUTF8 (U_8 *dest, U_8 *source, U_32 length)
 		}
 	}
 
+	if (compression > 0) {
+		mueStatus |= CFR_FOUND_CHARS_IN_EXTENDED_MUE_FORM;
+	}
+
 	result = (I_32) (length - compression);
+
+	if (NULL != mueAsciiStatus) {
+		*mueAsciiStatus = mueStatus;
+	}
 
 fail:
 	Trc_BCU_verifyCanonisizeAndCopyUTF8_Exit(result);

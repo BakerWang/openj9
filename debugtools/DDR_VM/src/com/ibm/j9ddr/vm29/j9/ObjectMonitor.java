@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2014 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9;
 
@@ -41,15 +41,22 @@ public abstract class ObjectMonitor implements Comparable<ObjectMonitor>
 	 */
 	public static ObjectMonitor fromJ9Object(J9ObjectPointer object) throws CorruptDataException
 	{
-		AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.OBJECT_MONITOR_VERSION);
+		AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.ALG_OBJECT_MONITOR_VERSION);
 		switch (version.getAlgorithmVersion()) {
 			// Add case statements for new algorithm versions
-			default:
+			case 0:
 				ObjectMonitor_V1 v1 = new ObjectMonitor_V1(object);
 				if(v1.getLockword().isNull() && !v1.isInTable()) {
 					return null;
 				} else {
 					return v1;
+				}
+			default:
+				ObjectMonitor_V2 v2 = new ObjectMonitor_V2(object);
+				if(v2.getLockword().isNull() && !v2.isInTable()) {
+					return null;
+				} else {
+					return v2;
 				}
 		}
 	}

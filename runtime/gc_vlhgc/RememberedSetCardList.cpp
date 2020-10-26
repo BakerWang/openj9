@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "HeapRegionManager.hpp"
@@ -127,14 +127,14 @@ void
 MM_RememberedSetCardList::add(MM_EnvironmentVLHGC *env, J9Object *object)
 {
 	MM_InterRegionRememberedSet *interRegionRememberedSet = MM_GCExtensions::getExtensions(env)->interRegionRememberedSet;
-	MM_RememberedSetCard card = interRegionRememberedSet->getRememberedSetCardFromJ9Object(object);
+	UDATA card = interRegionRememberedSet->getRememberedSetCardFromJ9Object(object);
 	MM_RememberedSetCardBucket *bucket = mapToBucket(env);
 	bucket->add(env, card);
 
 }
 
 bool
-MM_RememberedSetCardList::isRemembered(MM_EnvironmentVLHGC *env, MM_RememberedSetCard card)
+MM_RememberedSetCardList::isRemembered(MM_EnvironmentVLHGC *env, UDATA card)
 {
 	Assert_MM_true(FALSE == _overflowed);
 	

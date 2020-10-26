@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 2017, 2017 IBM Corp. and others
+ * Copyright (c) 2017, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef CONFIGURATIONDELEGATE_HPP_
@@ -32,7 +31,7 @@
 #include "sizeclasses.h"
 
 #include "ClassLoaderManager.hpp"
-#include "CollectorLanguageInterface.hpp"
+#include "ConcurrentGC.hpp"
 #include "EnvironmentBase.hpp"
 #include "GCExtensions.hpp"
 #include "GlobalAllocationManager.hpp"
@@ -42,7 +41,6 @@
 #include "ObjectAccessBarrier.hpp"
 #include "ObjectAllocationInterface.hpp"
 #include "StringTable.hpp"
-
 
 #include "OwnableSynchronizerObjectList.hpp"
 #include "ReferenceObjectList.hpp"
@@ -88,17 +86,19 @@ public:
 		if (extensions->alwaysCallWriteBarrier) {
 			writeBarrierType = gc_modron_wrtbar_always;
 		}
+
 		Assert_MM_true(gc_modron_wrtbar_illegal != writeBarrierType);
 		javaVM->gcWriteBarrierType = writeBarrierType;
 
 		if (extensions->alwaysCallReadBarrier) {
+			/* AlwaysCallReadBarrier takes precedence over other read barrier types */
 			javaVM->gcReadBarrierType = gc_modron_readbar_always;
+		} else if (extensions->isScavengerEnabled() && extensions->isConcurrentScavengerEnabled()) {
+			javaVM->gcReadBarrierType = gc_modron_readbar_range_check;
+		} else if (extensions->isVLHGC() && extensions->isConcurrentCopyForwardEnabled()) {
+			javaVM->gcReadBarrierType = gc_modron_readbar_region_check;
 		} else {
-			if (extensions->isConcurrentScavengerEnabled()) {
-				javaVM->gcReadBarrierType = gc_modron_readbar_evacuate;
-			} else {
-				javaVM->gcReadBarrierType = gc_modron_readbar_none;
-			}
+			javaVM->gcReadBarrierType = gc_modron_readbar_none;
 		}
 
 		/* set allocation type for J9 VM */
@@ -111,12 +111,18 @@ public:
 		/* Enable string constant collection by default if we support class unloading */
 		extensions->collectStringConstants = true;
 
-		/* note that these are the default thresholds but Realtime Configurations override these values, in their initialize methods (hence it is key for them to call their super initialize, first) */
+		/*
+		 *  note that these are the default thresholds but Realtime Configurations override these values, in their initialize methods
+		 * (hence it is key for them to call their super initialize, first)
+		 */
+#define DYNAMIC_CLASS_UNLOADING_THRESHOLD			6
+#define DYNAMIC_CLASS_UNLOADING_KICKOFF_THRESHOLD	80000
+
 		if (!extensions->dynamicClassUnloadingThresholdForced) {
-			extensions->dynamicClassUnloadingThreshold = 6;
+			extensions->dynamicClassUnloadingThreshold = DYNAMIC_CLASS_UNLOADING_THRESHOLD;
 		}
 		if (!extensions->dynamicClassUnloadingKickoffThresholdForced) {
-			extensions->dynamicClassUnloadingKickoffThreshold = 0;
+			extensions->dynamicClassUnloadingKickoffThreshold = DYNAMIC_CLASS_UNLOADING_KICKOFF_THRESHOLD;
 		}
 		return true;
 	}
@@ -187,12 +193,12 @@ public:
 				extensions->unfinalizedObjectLists = &regionExtension->_unfinalizedObjectLists[list];
 
 				new(&regionExtension->_ownableSynchronizerObjectLists[list]) MM_OwnableSynchronizerObjectList();
-				regionExtension->_ownableSynchronizerObjectLists[list].setNextList(extensions->ownableSynchronizerObjectLists);
+				regionExtension->_ownableSynchronizerObjectLists[list].setNextList(extensions->getOwnableSynchronizerObjectLists());
 				regionExtension->_ownableSynchronizerObjectLists[list].setPreviousList(NULL);
-				if (NULL != extensions->ownableSynchronizerObjectLists) {
-					extensions->ownableSynchronizerObjectLists->setPreviousList(&regionExtension->_ownableSynchronizerObjectLists[list]);
+				if (NULL != extensions->getOwnableSynchronizerObjectLists()) {
+					extensions->getOwnableSynchronizerObjectLists()->setPreviousList(&regionExtension->_ownableSynchronizerObjectLists[list]);
 				}
-				extensions->ownableSynchronizerObjectLists = &regionExtension->_ownableSynchronizerObjectLists[list];
+				extensions->setOwnableSynchronizerObjectLists(&regionExtension->_ownableSynchronizerObjectLists[list]);
 
 				new(&regionExtension->_referenceObjectLists[list]) MM_ReferenceObjectList();
 			}
@@ -225,6 +231,7 @@ public:
 
 		switch (_gcPolicy) {
 		case gc_policy_optthruput:
+		case gc_policy_nogc:
 		case gc_policy_optavgpause:
 		case gc_policy_gencon:
 			hashSaltCount = 1;
@@ -299,7 +306,8 @@ public:
 #if defined(OMR_GC_MODRON_CONCURRENT_MARK)
 			vmThread->cardTableVirtualStart = (U_8*)j9gc_incrementalUpdate_getCardTableVirtualStart(omrVM);
 			vmThread->cardTableShiftSize = j9gc_incrementalUpdate_getCardTableShiftValue(omrVM);
-			if (!extensions->optimizeConcurrentWB || (CONCURRENT_OFF < extensions->collectorLanguageInterface->concurrentGC_getConcurrentStats()->getExecutionMode())) {
+			MM_ConcurrentGC *concurrentGC = (MM_ConcurrentGC *)extensions->getGlobalCollector();
+			if (!extensions->optimizeConcurrentWB || (CONCURRENT_OFF < concurrentGC->getConcurrentGCStats()->getExecutionMode())) {
 				vmThread->privateFlags |= J9_PRIVATE_FLAGS_CONCURRENT_MARK_ACTIVE;
 			}
 #else

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2015, 2017 IBM Corp. and others
+ * Copyright (c) 2015, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,21 +17,22 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "j9cfg.h"
+#include "j2sever.h"
 #include "ModronAssertions.h"
 
 #if defined(OMR_GC_MODRON_SCAVENGER)
 #include "CollectorLanguageInterfaceImpl.hpp"
 #include "ConfigurationDelegate.hpp"
-#include "Dispatcher.hpp"
 #include "FinalizableReferenceBuffer.hpp"
 #include "FinalizableObjectBuffer.hpp"
 #include "HeapRegionDescriptorStandard.hpp"
 #include "HeapRegionIteratorStandard.hpp"
 #include "ObjectAccessBarrier.hpp"
+#include "ParallelDispatcher.hpp"
 #include "ReferenceObjectBuffer.hpp"
 #include "ReferenceObjectList.hpp"
 #include "ReferenceStats.hpp"
@@ -47,6 +48,7 @@ MM_ScavengerRootClearer::processReferenceList(MM_EnvironmentStandard *env, MM_He
 	const uintptr_t maxObjects = region->getSize();
 	uintptr_t objectsVisited = 0;
 	GC_FinalizableReferenceBuffer buffer(_extensions);
+	bool const compressed = _extensions->compressObjectReferences();
 
 	omrobjectptr_t referenceObj = headOfList;
 	while (NULL != referenceObj) {
@@ -57,26 +59,28 @@ MM_ScavengerRootClearer::processReferenceList(MM_EnvironmentStandard *env, MM_He
 		Assert_GC_true_with_message(env, _scavenger->isObjectInNewSpace(referenceObj), "Scavenged reference object not in new space: %p\n", referenceObj);
 
 		omrobjectptr_t nextReferenceObj = _extensions->accessBarrier->getReferenceLink(referenceObj);
-		GC_SlotObject referentSlotObject(_extensions->getOmrVM(), &J9GC_J9VMJAVALANGREFERENCE_REFERENT(env, referenceObj));
+		GC_SlotObject referentSlotObject(_extensions->getOmrVM(), J9GC_J9VMJAVALANGREFERENCE_REFERENT_ADDRESS(env, referenceObj));
 		omrobjectptr_t referent = referentSlotObject.readReferenceFromSlot();
 		if (NULL != referent) {
 			/* update the referent if it's been forwarded */
-			MM_ForwardedHeader forwardedReferent(referent);
+			MM_ForwardedHeader forwardedReferent(referent, compressed);
 			if (forwardedReferent.isForwardedPointer()) {
 				referent = forwardedReferent.getForwardedObject();
 				referentSlotObject.writeReferenceToSlot(referent);
 			}
 
 			if (_scavenger->isObjectInEvacuateMemory(referent)) {
-				uintptr_t referenceObjectType = J9CLASS_FLAGS(J9GC_J9OBJECT_CLAZZ(referenceObj)) & J9_JAVA_CLASS_REFERENCE_MASK;
+				uintptr_t referenceObjectType = J9CLASS_FLAGS(J9GC_J9OBJECT_CLAZZ(referenceObj, env)) & J9AccClassReferenceMask;
 				/* transition the state to cleared */
 				Assert_MM_true(GC_ObjectModel::REF_STATE_INITIAL == J9GC_J9VMJAVALANGREFERENCE_STATE(env, referenceObj));
 				J9GC_J9VMJAVALANGREFERENCE_STATE(env, referenceObj) = GC_ObjectModel::REF_STATE_CLEARED;
 
 				referenceStats->_cleared += 1;
 
-				if (J9_JAVA_CLASS_REFERENCE_PHANTOM == referenceObjectType) {
-					/* Phantom objects keep their referent - scanning will be done after the enqueuing */
+				/* Phantom references keep it's referent alive in Java 8 and doesn't in Java 9 and later */
+				J9JavaVM * javaVM = (J9JavaVM*)env->getLanguageVM();
+				if ((J9AccClassReferencePhantom == referenceObjectType) && ((J2SE_VERSION(javaVM) & J2SE_VERSION_MASK) <= J2SE_18)) {
+					/* Scanning will be done after the enqueuing */
 					_scavenger->copyObjectSlot(env, &referentSlotObject);
 				} else {
 					referentSlotObject.writeReferenceToSlot(NULL);
@@ -87,7 +91,7 @@ MM_ScavengerRootClearer::processReferenceList(MM_EnvironmentStandard *env, MM_He
 					/* Reference object can be enqueued onto the finalizable list */
 					buffer.add(env, referenceObj);
 					referenceStats->_enqueued += 1;
-					_clij->scavenger_setFinalizationRequired(true);
+					_scavenger->getDelegate()->setFinalizationRequired(true);
 				}
 			}
 		}
@@ -102,6 +106,9 @@ MM_ScavengerRootClearer::scavengeReferenceObjects(MM_EnvironmentStandard *env, u
 {
 	Assert_MM_true(env->getGCEnvironment()->_referenceObjectBuffer->isEmpty());
 
+	/* Disable dynamicBreadthFirstScanOrdering depth copying before scavenging reference objects to avoid immediate copying of hot children of reference objects */
+	env->disableHotFieldDepthCopy();
+
 	MM_ScavengerJavaStats *javaStats = &env->getGCEnvironment()->_scavengerJavaStats;
 	MM_HeapRegionDescriptorStandard *region = NULL;
 	GC_HeapRegionIteratorStandard regionIterator(_extensions->heapRegionManager);
@@ -115,21 +122,21 @@ MM_ScavengerRootClearer::scavengeReferenceObjects(MM_EnvironmentStandard *env, u
 					MM_ReferenceStats *stats = NULL;
 					j9object_t head = NULL;
 					switch (referenceObjectType) {
-						case J9_JAVA_CLASS_REFERENCE_WEAK:
+						case J9AccClassReferenceWeak:
 						list->startWeakReferenceProcessing();
 						if (!list->wasWeakListEmpty()) {
 							head = list->getPriorWeakList();
 							stats = &javaStats->_weakReferenceStats;
 						}
 						break;
-						case J9_JAVA_CLASS_REFERENCE_SOFT:
+						case J9AccClassReferenceSoft:
 						list->startSoftReferenceProcessing();
 						if (!list->wasSoftListEmpty()) {
 							head = list->getPriorSoftList();
 							stats = &javaStats->_softReferenceStats;
 						}
 						break;
-						case J9_JAVA_CLASS_REFERENCE_PHANTOM:
+						case J9AccClassReferencePhantom:
 						list->startPhantomReferenceProcessing();
 						if (!list->wasPhantomListEmpty()) {
 							head = list->getPriorPhantomList();
@@ -147,6 +154,9 @@ MM_ScavengerRootClearer::scavengeReferenceObjects(MM_EnvironmentStandard *env, u
 			}
 		}
 	}
+	/* Re-enable dynamicBreadthFirstScanOrdering depth copying after scavenging reference objects */
+	env->enableHotFieldDepthCopy();
+	
 	Assert_MM_true(env->getGCEnvironment()->_referenceObjectBuffer->isEmpty());
 }
 
@@ -154,10 +164,14 @@ MM_ScavengerRootClearer::scavengeReferenceObjects(MM_EnvironmentStandard *env, u
 void
 MM_ScavengerRootClearer::scavengeUnfinalizedObjects(MM_EnvironmentStandard *env)
 {
+	/* Disable dynamicBreadthFirstScanOrdering depth copying before scavenging finalizable objects to avoid immediate copying of hot children of finalizable objects */
+	env->disableHotFieldDepthCopy();
+
 	GC_FinalizableObjectBuffer buffer(_extensions);
 	MM_HeapRegionDescriptorStandard *region = NULL;
 	GC_HeapRegionIteratorStandard regionIterator(_extensions->heapRegionManager);
 	GC_Environment *gcEnv = env->getGCEnvironment();
+	bool const compressed = _extensions->compressObjectReferences();
 	while(NULL != (region = regionIterator.nextRegion())) {
 		if (MEMORY_TYPE_NEW == (region->getTypeFlags() & MEMORY_TYPE_NEW)) {
 			MM_HeapRegionDescriptorStandardExtension *regionExtension = MM_ConfigurationDelegate::getHeapRegionDescriptorStandardExtension(env, region);
@@ -170,7 +184,7 @@ MM_ScavengerRootClearer::scavengeUnfinalizedObjects(MM_EnvironmentStandard *env)
 							omrobjectptr_t next = NULL;
 							gcEnv->_scavengerJavaStats._unfinalizedCandidates += 1;
 
-							MM_ForwardedHeader forwardedHeader(object);
+							MM_ForwardedHeader forwardedHeader(object, compressed);
 							if (!forwardedHeader.isForwardedPointer()) {
 								Assert_MM_true(_scavenger->isObjectInEvacuateMemory(object));
 								next = _extensions->accessBarrier->getFinalizeLink(object);
@@ -182,7 +196,7 @@ MM_ScavengerRootClearer::scavengeUnfinalizedObjects(MM_EnvironmentStandard *env)
 									/* object was not previously forwarded -- it is now finalizable so push it to the local buffer */
 									buffer.add(env, finalizableObject);
 									gcEnv->_scavengerJavaStats._unfinalizedEnqueued += 1;
-									_clij->scavenger_setFinalizationRequired(true);
+									_scavenger->getDelegate()->setFinalizationRequired(true);
 								}
 							} else {
 								omrobjectptr_t forwardedPtr =  forwardedHeader.getForwardedObject();
@@ -203,6 +217,9 @@ MM_ScavengerRootClearer::scavengeUnfinalizedObjects(MM_EnvironmentStandard *env)
 
 	/* restore everything to a flushed state before exiting */
 	gcEnv->_unfinalizedObjectBuffer->flush(env);
+
+	/* Re-enable dynamicBreadthFirstScanOrdering depth copying after scavenging finalizable objects */
+	env->enableHotFieldDepthCopy();
 }
 #endif /* J9VM_GC_FINALIZATION */
 #endif /* defined(OMR_GC_MODRON_SCAVENGER) */

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <stdlib.h>
@@ -75,9 +75,10 @@ static I_32 dumpMethodDebugInfo (J9PortLibrary *portLib, J9ROMClass *romClass, J
 static I_32 dumpNative ( J9PortLibrary *portLib, J9ROMMethod * romMethod, U_32 flags);
 static I_32 dumpGenericSignature (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
 static I_32 dumpEnclosingMethod (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
+static I_32 dumpPermittedSubclasses(J9PortLibrary *portLib, J9ROMClass *romClass);
+#if JAVA_SPEC_VERSION >= 11
 static I_32 dumpNest (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
-#endif /* J9VM_OPT_VALHALLA_NESTMATES */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 static I_32 dumpSimpleName (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
 static I_32 dumpUTF ( J9UTF8 *utfString, J9PortLibrary *portLib, U_32 flags);
 static I_32 dumpSourceDebugExtension (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
@@ -86,10 +87,8 @@ static I_32 dumpRomField ( J9ROMFieldShape *romField, J9PortLibrary *portLib, U_
 static I_32 dumpSourceFileName (J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
 static I_32 dumpCPShapeDescription ( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
 static I_32 dumpCallSiteData ( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 static I_32 dumpStaticSplitSideTable( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
 static I_32 dumpSpecialSplitSideTable( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 static void printMethodExtendedModifiers(J9PortLibrary *portLib, U_32 modifiers);
 /*
 	Dump a printed representation of the specified @romClass to stdout.
@@ -130,7 +129,7 @@ IDATA j9bcutil_dumpRomClass( J9ROMClass *romClass, J9PortLibrary *portLib, J9Tra
 	/* dump the enclosing method */
 	dumpEnclosingMethod(portLib, romClass, flags);
 
-	j9tty_printf( PORTLIB,  "Oracle Access Flags (0x%X): ", romClass->modifiers);
+	j9tty_printf( PORTLIB,  "Basic Access Flags (0x%X): ", romClass->modifiers);
 	printModifiers(PORTLIB, romClass->modifiers, ONLY_SPEC_MODIFIERS, MODIFIERSOURCE_CLASS);
 	j9tty_printf( PORTLIB,  "\n");
 	j9tty_printf( PORTLIB,  "J9 Access Flags (0x%X): ", romClass->extraModifiers);
@@ -182,10 +181,14 @@ IDATA j9bcutil_dumpRomClass( J9ROMClass *romClass, J9PortLibrary *portLib, J9Tra
 		}
 	}
 
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
-	/* dump the nest members or nest top, if defined */
+	if (J9ROMCLASS_IS_SEALED(romClass)) {
+		dumpPermittedSubclasses(portLib, romClass);
+	}
+
+#if JAVA_SPEC_VERSION >= 11
+	/* dump the nest members or nest host, if defined */
 	dumpNest(portLib, romClass, flags);
-#endif /* J9VM_OPT_VALHALLA_NESTMATES */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 
 	j9tty_printf( PORTLIB, "Fields (%i):\n", romClass->romFieldCount);
 	currentField = romFieldsStartDo(romClass, &state);
@@ -219,11 +222,9 @@ IDATA j9bcutil_dumpRomClass( J9ROMClass *romClass, J9PortLibrary *portLib, J9Tra
 
 	dumpCallSiteData(portLib, romClass, flags);
 
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	/* dump split side tables */
 	dumpStaticSplitSideTable(portLib, romClass, flags);
 	dumpSpecialSplitSideTable(portLib, romClass, flags);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 	j9tty_printf( PORTLIB, "\n");
 	return BCT_ERR_NO_ERROR;
@@ -234,11 +235,7 @@ static I_32 dumpCPShapeDescription( J9PortLibrary *portLib, J9ROMClass *romClass
 	U_32 *cpDescription = J9ROMCLASS_CPSHAPEDESCRIPTION(romClass);
 	U_32 descriptionLong;
 	U_32 i, j, k, numberOfLongs;
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-	char symbols[] = ".CSIFJDi.vxyzTHA";
-#else /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
-	char symbols[] = ".CSIFJDisvxyzTHA";
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
+	char symbols[] = ".CSIFJDi.vxyzTHA.cxv";
 
 	PORT_ACCESS_FROM_PORT( portLib );
 
@@ -527,13 +524,12 @@ dumpCallSiteData(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 						j9tty_printf(PORTLIB, "\n");
 						break;
 
-#if !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
-					case J9CPTYPE_SHARED_METHOD:
-#endif /* !defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					case J9CPTYPE_HANDLE_METHOD:
 					case J9CPTYPE_INSTANCE_METHOD:
 					case J9CPTYPE_STATIC_METHOD:
 					case J9CPTYPE_INTERFACE_METHOD:
+					case J9CPTYPE_INTERFACE_INSTANCE_METHOD:
+					case J9CPTYPE_INTERFACE_STATIC_METHOD:
 						j9tty_printf(PORTLIB, "      Method: ");
 						classRef = (J9ROMClassRef *) &constantPool[((J9ROMMethodRef *)item)->classRefCPIndex];
 						nameAndSig = J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *)item);
@@ -573,9 +569,7 @@ dumpCallSiteData(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 						break;
 
 					case J9CPTYPE_UNUSED:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 					case J9CPTYPE_UNUSED8:
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					default:
 						/* unknown cp type */
 						j9tty_printf(PORTLIB, "      <unknown type>\n");
@@ -588,7 +582,6 @@ dumpCallSiteData(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 	return BCT_ERR_NO_ERROR;
 }
 
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 static I_32
 dumpStaticSplitSideTable(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 {
@@ -624,7 +617,6 @@ dumpSpecialSplitSideTable(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 fla
 
 	return BCT_ERR_NO_ERROR;
 }
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 
 static I_32
 dumpAnnotationInfo( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
@@ -695,11 +687,11 @@ dumpAnnotationInfo( J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 			U_32 *codeTypeAnnotationData = getCodeTypeAnnotationsDataFromROMMethod(romMethod);
 			if ((NULL != methodAnnotationData) || (NULL != parametersAnnotationData) || (NULL != defaultAnnotationData)) {
 				j9tty_printf(PORTLIB, "      Name: ");
-				dumpUTF( (J9UTF8 *) J9ROMMETHOD_GET_NAME(romClass, romMethod), portLib, flags );
+				dumpUTF( (J9UTF8 *) J9ROMMETHOD_NAME(romMethod), portLib, flags );
 				j9tty_printf( PORTLIB, "\n");
 
 				j9tty_printf(PORTLIB, "      Signature: ");
-				dumpUTF( (J9UTF8 *) J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod), portLib, flags );
+				dumpUTF( (J9UTF8 *) J9ROMMETHOD_SIGNATURE(romMethod), portLib, flags );
 				j9tty_printf(PORTLIB, "\n");
 			}
 			if (NULL != methodAnnotationData) {
@@ -836,13 +828,29 @@ dumpEnclosingMethod(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 	return BCT_ERR_NO_ERROR;
 }
 
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
+static I_32
+dumpPermittedSubclasses(J9PortLibrary *portLib, J9ROMClass *romClass)
+{
+	PORT_ACCESS_FROM_PORT(portLib);
+
+	U_32 *permittedSubclassesCountPtr = getNumberOfPermittedSubclassesPtr(romClass);
+	U_16 i = 0;
+
+	j9tty_printf(PORTLIB, "Permitted subclasses (%i):\n", *permittedSubclassesCountPtr);
+	for (; i < *permittedSubclassesCountPtr; i++) {
+		J9UTF8 *permittedSubclassNameUtf8 = permittedSubclassesNameAtIndex(permittedSubclassesCountPtr, i);
+		j9tty_printf(PORTLIB, "  %.*s\n", J9UTF8_LENGTH(permittedSubclassNameUtf8), J9UTF8_DATA(permittedSubclassNameUtf8));
+	}
+	return BCT_ERR_NO_ERROR;
+}
+
+#if JAVA_SPEC_VERSION >= 11
 static I_32
 dumpNest(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 {
 	PORT_ACCESS_FROM_PORT(portLib);
 	U_16 nestMemberCount = romClass->nestMemberCount;
-	J9UTF8 *nestTopName = J9ROMCLASS_NESTTOPNAME(romClass);
+	J9UTF8 *nestHostName = J9ROMCLASS_NESTHOSTNAME(romClass);
 
 	if (0 != nestMemberCount) {
 		/* The class has a "nest members" attribute (non-zero nestMemberCount) */
@@ -855,13 +863,13 @@ dumpNest(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
 		}
 	}
 
-	if (NULL != nestTopName) {
-		/* The class has a "member of nest" attribute (non-NULL nest top name) */
-		j9tty_printf(PORTLIB, "Nest top class: %.*s\n", J9UTF8_LENGTH(nestTopName), J9UTF8_DATA(nestTopName));
+	if (NULL != nestHostName) {
+		/* The class has a "member of nest" attribute (non-NULL nest host name) */
+		j9tty_printf(PORTLIB, "Nest host class: %.*s\n", J9UTF8_LENGTH(nestHostName), J9UTF8_DATA(nestHostName));
 	}
 	return BCT_ERR_NO_ERROR;
 }
-#endif /* J9VM_OPT_VALHALLA_NESTMATES */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 
 static I_32
 dumpSimpleName(J9PortLibrary *portLib, J9ROMClass *romClass, U_32 flags)
@@ -891,11 +899,11 @@ I_32 j9bcutil_dumpRomMethod( J9ROMMethod *romMethod, J9ROMClass *romClass, J9Por
 	PORT_ACCESS_FROM_PORT( portLib );
 
 	j9tty_printf( PORTLIB,  "  Name: ");
-	dumpUTF( (J9UTF8 *) J9ROMMETHOD_GET_NAME(romClass, romMethod), portLib, flags );
+	dumpUTF( (J9UTF8 *) J9ROMMETHOD_NAME(romMethod), portLib, flags );
 	j9tty_printf( PORTLIB,  "\n");
 
 	j9tty_printf( PORTLIB,  "  Signature: ");
-	dumpUTF( (J9UTF8 *) J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod), portLib, flags );
+	dumpUTF( (J9UTF8 *) J9ROMMETHOD_SIGNATURE(romMethod), portLib, flags );
 	j9tty_printf( PORTLIB,  "\n");
 
 	j9tty_printf( PORTLIB, "  Access Flags (%X): ", romMethod->modifiers);
@@ -1019,7 +1027,7 @@ I_32 j9bcutil_dumpRomMethod( J9ROMMethod *romMethod, J9ROMClass *romClass, J9Por
  *			-ACC_SYNTHETIC
  *			-ACC_ENUM
  *
- *		:: METHODPARAMATERS ::
+ *		:: METHODPARAMETERS ::
  *			-ACC_FINAL
  *			-ACC_SYNTHETIC
  *			-ACC_MANDATED
@@ -1329,6 +1337,25 @@ j9_printClassExtraModifiers(J9PortLibrary *portLib, U_32 modifiers)
 	{
 		j9tty_printf(PORTLIB, "(preverified)");
 		modifiers &= ~CFR_ACC_HAS_VERIFY_DATA;
+		if(modifiers) j9tty_printf(PORTLIB, " ");
+	}
+
+	if(modifiers & J9AccClassIsUnmodifiable)
+	{
+		j9tty_printf(PORTLIB, "(unmodifiable)");
+		modifiers &= ~J9AccClassIsUnmodifiable;
+		if(modifiers) j9tty_printf(PORTLIB, " ");
+	}
+
+	if(modifiers & J9AccRecord) {
+		j9tty_printf(PORTLIB, "(record)");
+		modifiers &= ~J9AccRecord;
+		if(modifiers) j9tty_printf(PORTLIB, " ");
+	}
+
+	if(modifiers & J9AccSealed) {
+		j9tty_printf(PORTLIB, "(sealed)");
+		modifiers &= ~J9AccSealed;
 		if(modifiers) j9tty_printf(PORTLIB, " ");
 	}
 }

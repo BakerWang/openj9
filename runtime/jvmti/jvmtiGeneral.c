@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "jvmtiHelpers.h"
@@ -25,11 +25,11 @@
 #include "j2sever.h"
 
 typedef struct {
-	char * errorName;
+	const char *errorName;
 	jvmtiError errorValue;
 } J9JvmtiErrorMapping;
 
-static J9JvmtiErrorMapping errorMap[] = {
+static const J9JvmtiErrorMapping errorMap[] = {
 	{ "JVMTI_ERROR_NONE" , 0 },
 	{ "JVMTI_ERROR_INVALID_THREAD" , 10 },
 	{ "JVMTI_ERROR_INVALID_THREAD_GROUP" , 11 },
@@ -43,6 +43,7 @@ static J9JvmtiErrorMapping errorMap[] = {
 	{ "JVMTI_ERROR_INVALID_METHODID" , 23 },
 	{ "JVMTI_ERROR_INVALID_LOCATION" , 24 },
 	{ "JVMTI_ERROR_INVALID_FIELDID" , 25 },
+	{ "JVMTI_ERROR_INVALID_MODULE" , 26 },
 	{ "JVMTI_ERROR_NO_MORE_FRAMES" , 31 },
 	{ "JVMTI_ERROR_OPAQUE_FRAME" , 32 },
 	{ "JVMTI_ERROR_TYPE_MISMATCH" , 34 },
@@ -64,7 +65,11 @@ static J9JvmtiErrorMapping errorMap[] = {
 	{ "JVMTI_ERROR_NAMES_DONT_MATCH" , 69 },
 	{ "JVMTI_ERROR_UNSUPPORTED_REDEFINITION_CLASS_MODIFIERS_CHANGED" , 70 },
 	{ "JVMTI_ERROR_UNSUPPORTED_REDEFINITION_METHOD_MODIFIERS_CHANGED" , 71 },
+#if (JAVA_SPEC_VERSION >= 11)
+	{ "JVMTI_ERROR_UNSUPPORTED_REDEFINITION_CLASS_ATTRIBUTE_CHANGED" , 72 },
+#endif /* (JAVA_SPEC_VERSION >= 11) */
 	{ "JVMTI_ERROR_UNMODIFIABLE_CLASS" , 79 },
+	{ "JVMTI_ERROR_UNMODIFIABLE_MODULE" , 80 },
 	{ "JVMTI_ERROR_NOT_AVAILABLE" , 98 },
 	{ "JVMTI_ERROR_MUST_POSSESS_CAPABILITY" , 99 },
 	{ "JVMTI_ERROR_NULL_POINTER" , 100 },
@@ -88,15 +93,19 @@ jvmtiGetPhase(jvmtiEnv* env,
 	jvmtiPhase* phase_ptr)
 {
 	jvmtiError rc;
+	jvmtiPhase rv_phase = JVMTI_PHASE_DEAD;
 
 	Trc_JVMTI_jvmtiGetPhase_Entry(env);
 
 	ENSURE_NON_NULL(phase_ptr);
 
-	*phase_ptr = (jvmtiPhase) J9JVMTI_DATA_FROM_ENV(env)->phase;
+	rv_phase = (jvmtiPhase) J9JVMTI_DATA_FROM_ENV(env)->phase;
 	rc = JVMTI_ERROR_NONE;
 
 done:
+	if (NULL != phase_ptr) {
+		*phase_ptr = rv_phase;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetPhase);
 }
 
@@ -121,7 +130,7 @@ jvmtiDisposeEnvironment(jvmtiEnv* env)
 
 		omrthread_monitor_exit(jvmtiData->mutex);
 		vm->internalVMFunctions->releaseExclusiveVMAccess(currentThread);
-		vm->internalVMFunctions->internalReleaseVMAccess(currentThread);
+		vm->internalVMFunctions->internalExitVMToJNI(currentThread);
 	}
 
 	TRACE_JVMTI_RETURN(jvmtiDisposeEnvironment);
@@ -147,15 +156,19 @@ jvmtiGetEnvironmentLocalStorage(jvmtiEnv* env,
 	void** data_ptr)
 {
 	jvmtiError rc;
+	void *rv_data = NULL;
 
 	Trc_JVMTI_jvmtiGetEnvironmentLocalStorage_Entry(env);
 
 	ENSURE_NON_NULL(data_ptr);
 
-	*data_ptr = ((J9JVMTIEnv *) env)->environmentLocalStorage;
+	rv_data = ((J9JVMTIEnv *) env)->environmentLocalStorage;
 	rc = JVMTI_ERROR_NONE;
 
 done:
+	if (NULL != data_ptr) {
+		*data_ptr = rv_data;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetEnvironmentLocalStorage);
 }
 
@@ -164,22 +177,31 @@ jvmtiError JNICALL
 jvmtiGetVersionNumber(jvmtiEnv* env,
 	jint* version_ptr)
 {
+#if JAVA_SPEC_VERSION >= 11
 	J9JavaVM * vm = JAVAVM_FROM_ENV(env);
-	jvmtiError rc;
+#endif /* JAVA_SPEC_VERSION >= 11 */
+	jvmtiError rc = JVMTI_ERROR_NONE;
+	jint rv_version = JVMTI_1_2_3_SPEC_VERSION;
 
 	Trc_JVMTI_jvmtiGetVersionNumber_Entry(env);
 
 	ENSURE_NON_NULL(version_ptr);
 
-	*version_ptr = JVMTI_1_2_3_SPEC_VERSION;
-
-	if (J2SE_VERSION(vm) >= J2SE_19) {
-		*version_ptr = JVMTI_VERSION_9_0;
+#if JAVA_SPEC_VERSION >= 11
+#if JAVA_SPEC_VERSION >= 15
+	if (J2SE_VERSION(vm) >= J2SE_V15) {
+		rv_version = JVMTI_VERSION_15;
+	} else
+#endif /* JAVA_SPEC_VERSION >= 15 */
+	if (J2SE_VERSION(vm) >= J2SE_V11) {
+		rv_version = JVMTI_VERSION_11;
 	}
-
-	rc = JVMTI_ERROR_NONE;
+#endif /* JAVA_SPEC_VERSION >= 11 */
 
 done:
+	if (NULL != version_ptr) {
+		*version_ptr = rv_version;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetVersionNumber);
 }
 
@@ -189,9 +211,10 @@ jvmtiGetErrorName(jvmtiEnv* env,
 	jvmtiError error,
 	char** name_ptr)
 {
-	J9JvmtiErrorMapping * mapping;
+	const J9JvmtiErrorMapping *mapping = NULL;
 	jvmtiError rc = JVMTI_ERROR_ILLEGAL_ARGUMENT;
 	PORT_ACCESS_FROM_JVMTI(env);
+	char *rv_name = NULL;
 
 	Trc_JVMTI_jvmtiGetErrorName_Entry(env);
 
@@ -200,19 +223,22 @@ jvmtiGetErrorName(jvmtiEnv* env,
 	mapping = errorMap;
 	while (mapping->errorName != NULL) {
 		if (mapping->errorValue == error) {
-			*name_ptr = j9mem_allocate_memory(strlen(mapping->errorName) + 1, J9MEM_CATEGORY_JVMTI_ALLOCATE);
-			if (*name_ptr == NULL) {
+			rv_name = j9mem_allocate_memory(strlen(mapping->errorName) + 1, J9MEM_CATEGORY_JVMTI_ALLOCATE);
+			if (rv_name == NULL) {
 				rc = JVMTI_ERROR_OUT_OF_MEMORY;
 			} else {
-				strcpy(*name_ptr, mapping->errorName);
+				strcpy(rv_name, mapping->errorName);
 				rc = JVMTI_ERROR_NONE;
 			}
 			break;
 		}
 		++mapping;
 	}
-
 done:
+
+	if (NULL != name_ptr) {
+		*name_ptr = rv_name;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetErrorName);
 }
 
@@ -264,15 +290,18 @@ jvmtiGetJLocationFormat(jvmtiEnv* env,
 	jvmtiJlocationFormat* format_ptr)
 {
 	jvmtiError rc;
+	jint rv_format = JVMTI_JLOCATION_JVMBCI;
 
 	Trc_JVMTI_jvmtiGetJLocationFormat_Entry(env);
 
 	ENSURE_NON_NULL(format_ptr);
 
-	*format_ptr = JVMTI_JLOCATION_JVMBCI;
 	rc = JVMTI_ERROR_NONE;
 
 done:
+	if (NULL != format_ptr) {
+		*format_ptr = rv_format;
+	}
 	TRACE_JVMTI_RETURN(jvmtiGetJLocationFormat);
 }
 

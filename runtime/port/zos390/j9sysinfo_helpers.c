@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2013 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -27,6 +27,7 @@
  */
 
 #include <errno.h>
+#include <string.h>
 #include <sys/__wlm.h>
 
 #include "atoe.h"
@@ -36,12 +37,9 @@
 #include "j9sysinfo_helpers.h"
 #include "ut_j9prt.h"
 
-/* Foward declarations. */
-static int32_t
-computeCpuTime(struct J9PortLibrary *portLibrary, int64_t *cpuTime);
-
-static int32_t
-getProcessorSpeed(struct J9PortLibrary *portLibrary, int64_t *cpuSpeed);
+/* Forward declarations. */
+static int32_t computeCpuTime(struct J9PortLibrary *portLibrary, int64_t *cpuTime);
+static int32_t getProcessorSpeed(struct J9PortLibrary *portLibrary, int64_t *cpuSpeed);
 
 intptr_t
 retrieveZGuestMemoryStats(struct J9PortLibrary *portLibrary, struct J9GuestMemoryUsage *gmUsage)
@@ -125,7 +123,7 @@ computeCpuTime(struct J9PortLibrary *portLibrary, int64_t *cpuTime)
 	Trc_PRT_computeCpuTime_Entered();
 
 	/* First things first: Query size of the LPDAT structure. */
-	lpdatlen = j9req_lpdatlen();
+	lpdatlen = omrreq_lpdatlen();
 	if (lpdatlen < 0) {
 		/* The query failed!! */
 		Trc_PRT_computeCpuTime_unexpectedLPDataBuffSz(lpdatlen);
@@ -146,7 +144,7 @@ computeCpuTime(struct J9PortLibrary *portLibrary, int64_t *cpuTime)
 	lpdatp->length = lpdatlen;
 
 	/* We now query for the LPAR Data to obtain the CPU service units. */
-	rc = j9req_lpdat((char*)lpdatp);
+	rc = omrreq_lpdat((char*)lpdatp);
 	if (0 != rc) {
 		omrmem_free_memory(lpdatp);
 		Trc_PRT_computeCpuTime_failedRetrievingLparData(rc);
@@ -154,7 +152,7 @@ computeCpuTime(struct J9PortLibrary *portLibrary, int64_t *cpuTime)
 		return J9PORT_ERROR_HYPERVISOR_LPDAT_QUERY_FAILED;
 	}
 
-	/* Sum up serivce units in capped and uncapped modes for all entries that are
+	/* Sum up service units in capped and uncapped modes for all entries that are
 	 * present - by default, there being 48 entries, unless configured otherwise.
 	 */
 	for (i = 0; i < lpdatp->serviceTableEntries; i++) {

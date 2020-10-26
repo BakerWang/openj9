@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "ctest.h"
@@ -36,10 +36,6 @@ UDATA signalProtectedMain(struct J9PortLibrary *portLibrary, void *arg)
 	char **argv = args->argv;
 	PORT_ACCESS_FROM_PORT(args->portLibrary);
 	cTestPortLib = args->portLibrary;
-
-#ifdef J9VM_OPT_REMOTE_CONSOLE_SUPPORT
-	remoteConsole_parseCmdLine( cTestPortLib, argc - 1, argv );
-#endif
 
 #ifdef J9VM_OPT_MEMORY_CHECK_SUPPORT
 	/* This should happen before anybody allocates memory!  Otherwise, shutdown will not work properly. */

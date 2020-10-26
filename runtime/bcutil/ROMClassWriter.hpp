@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2001, 2017 IBM Corp. and others
+ * Copyright (c) 2001, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /*
@@ -134,17 +134,17 @@ private:
 	void writeConstantPoolShapeDescriptions(Cursor *cursor, bool markAndCountOnly);
 	void writeAnnotationInfo(Cursor *cursor);
 	void writeSourceDebugExtension(Cursor *cursor);
+	void writeRecordComponents(Cursor *cursor, bool markAndCountOnly);
 	void writeStackMaps(Cursor *cursor);
 	void writeOptionalInfo(Cursor *cursor);
 	void writeCallSiteData(Cursor *cursor, bool markAndCountOnly);
 	void writeVarHandleMethodTypeLookupTable(Cursor *cursor, bool markAndCountOnly);
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 	void writeStaticSplitTable(Cursor *cursor, bool markAndCountOnly);
 	void writeSpecialSplitTable(Cursor *cursor, bool markAndCountOnly);
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 	void writeByteCodes(Cursor *cursor, ClassFileOracle::MethodIterator *methodIterator);
 	U_32 computeNativeSignatureSize(U_8 *methodDescriptor);
 	void writeNativeSignature(Cursor *cursor, U_8 *methodDescriptor, U_8 nativeArgCount);
+	void writePermittedSubclasses(Cursor *cursor, bool markAndCountOnly);
 
 	BufferManager *_bufferManager;
 	ClassFileOracle *_classFileOracle;
@@ -159,9 +159,9 @@ private:
 	UDATA _fieldsSRPKey;
 	UDATA _cpDescriptionShapeSRPKey;
 	UDATA _innerClassesSRPKey;
-#if defined(J9VM_OPT_VALHALLA_NESTMATES)
+#if JAVA_SPEC_VERSION >= 11
 	UDATA _nestMembersSRPKey;
-#endif /* J9VM_OPT_VALHALLA_NESTMATES */
+#endif /* JAVA_SPEC_VERSION >= 11 */
 	UDATA _optionalInfoSRPKey;
 	UDATA _stackMapsSRPKey;
 	UDATA _enclosingMethodSRPKey;
@@ -171,10 +171,10 @@ private:
 	UDATA _typeAnnotationInfoSRPKey;
 	UDATA _callSiteDataSRPKey;	
 	UDATA _varHandleMethodTypeLookupTableSRPKey;
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)	
 	UDATA _staticSplitTableSRPKey;
 	UDATA _specialSplitTableSRPKey;
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
+	UDATA _recordInfoSRPKey;
+	UDATA _permittedSubclassesInfoSRPKey;
 };
 
 #endif /* ROMCLASSWRITER_HPP_ */

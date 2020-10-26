@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,11 +17,12 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "bcvcfr.h"
 #include "j9bcvnls.h"
+#include "cfrerrnls.h"
 
 #include "cfreader.h"
 #include "bcnames.h"
@@ -56,87 +57,92 @@ static void storeMethodInfo (J9BytecodeVerificationData * verifyData, J9UTF8* er
 J9Class *
 j9rtv_verifierGetRAMClass( J9BytecodeVerificationData *verifyData, J9ClassLoader* classLoader, U_8 *className, UDATA nameLength, IDATA *reasonCode)
 {
-	J9Class *found;
+	J9Class *found = NULL;
 	JavaVM* jniVM = (JavaVM*)verifyData->javaVM;
-    J9ThreadEnv* threadEnv;
+	J9ThreadEnv* threadEnv = NULL;
+	J9JavaVM *vm = verifyData->vmStruct->javaVM;
 	(*jniVM)->GetEnv(jniVM, (void**)&threadEnv, J9THREAD_VERSION_1_1);
 
-
 #ifdef J9VM_THR_PREEMPTIVE
-	threadEnv->monitor_enter(verifyData->vmStruct->javaVM->classTableMutex);
+	threadEnv->monitor_enter(vm->classTableMutex);
 #endif
 
 	/* Sniff the class table to see if already loaded */
 	Trc_RTV_j9rtv_verifierGetRAMClass_Entry(verifyData->vmStruct, classLoader, nameLength, className);
-	found = verifyData->vmStruct->javaVM->internalVMFunctions->hashClassTableAt (classLoader, className, nameLength);
+	found = vm->internalVMFunctions->hashClassTableAt (classLoader, className, nameLength);
 
 #ifdef J9VM_THR_PREEMPTIVE
-	threadEnv->monitor_exit(verifyData->vmStruct->javaVM->classTableMutex);
+	threadEnv->monitor_exit(vm->classTableMutex);
 #endif
 
 	if (!found) {
-		J9BytecodeVerificationData savedVerifyData;
-		UDATA *currentAlloc;
-		UDATA *internalBufferStart;
-		UDATA *internalBufferEnd;
-		J9VMThread *tmpVMC = verifyData->vmStruct;
-
-		Trc_RTV_j9rtv_verifierGetRAMClass_notFound(verifyData->vmStruct);
-
-		/* Nest class loading */
-		memcpy(&savedVerifyData, verifyData, sizeof(savedVerifyData));
-		verifyData->vmStruct = NULL;
-
-		if (BCV_ERR_INSUFFICIENT_MEMORY == allocateVerifyBuffers (tmpVMC->javaVM->portLibrary, verifyData)) {
-			/* returning BCV_ERR_INSUFFICIENT_MEMORY for OOM condition */
-			Trc_RTV_j9rtv_verifierGetRAMClass_OutOfMemoryException(verifyData->vmStruct, classLoader, nameLength, className);
-			*reasonCode = BCV_ERR_INSUFFICIENT_MEMORY;
+		/* Set reasonCode to BCV_ERR_CLASS_RELATIONSHIP_RECORD_REQUIRED if -XX:+ClassRelationshipVerifier is used, the class is not already loaded and if the classfile major version is at least 51 (Java 7) */
+		if (J9_ARE_ANY_BITS_SET(vm->extendedRuntimeFlags2, J9_EXTENDED_RUNTIME2_ENABLE_CLASS_RELATIONSHIP_VERIFIER) && (verifyData->romClass->majorVersion >= 51)) {
+			*reasonCode = BCV_ERR_CLASS_RELATIONSHIP_RECORD_REQUIRED;
 			return NULL;
-		}
+		} else {
+			J9BytecodeVerificationData savedVerifyData;
+			UDATA *currentAlloc;
+			UDATA *internalBufferStart;
+			UDATA *internalBufferEnd;
+			J9VMThread *tmpVMC = verifyData->vmStruct;
+
+			Trc_RTV_j9rtv_verifierGetRAMClass_notFound(verifyData->vmStruct);
+
+			/* Nest class loading */
+			memcpy(&savedVerifyData, verifyData, sizeof(savedVerifyData));
+			verifyData->vmStruct = NULL;
+
+			if (BCV_ERR_INSUFFICIENT_MEMORY == allocateVerifyBuffers (tmpVMC->javaVM->portLibrary, verifyData)) {
+				/* returning BCV_ERR_INSUFFICIENT_MEMORY for OOM condition */
+				Trc_RTV_j9rtv_verifierGetRAMClass_OutOfMemoryException(verifyData->vmStruct, classLoader, nameLength, className);
+				*reasonCode = BCV_ERR_INSUFFICIENT_MEMORY;
+				return NULL;
+			}
 
 #ifdef J9VM_THR_PREEMPTIVE
-		threadEnv->monitor_exit(verifyData->verifierMutex);
+			threadEnv->monitor_exit(verifyData->verifierMutex);
 #endif
 
-		/* Find the requested class, fully loading it, but not initializing it. */
+			/* Find the requested class, fully loading it, but not initializing it. */
 
-		found = tmpVMC->javaVM->internalVMFunctions->internalFindClassUTF8(
-			tmpVMC,
-			className,
-			nameLength,
-			classLoader,
-			J9_FINDCLASS_FLAG_THROW_ON_FAIL);
+			found = tmpVMC->javaVM->internalVMFunctions->internalFindClassUTF8(
+				tmpVMC,
+				className,
+				nameLength,
+				classLoader,
+				J9_FINDCLASS_FLAG_THROW_ON_FAIL);
 
-		if (NULL == found) {
-			*reasonCode = BCV_ERR_INACCESSIBLE_CLASS;
-		}
+			if (NULL == found) {
+				*reasonCode = BCV_ERR_INACCESSIBLE_CLASS;
+			}
 
 #ifdef J9VM_THR_PREEMPTIVE
-		/*
-		 * Note: if locking both verifierMutex and classTableMutex, they must be entered in that order (CMVC 186043).
-		 */
+			/*
+			 * Note: if locking both verifierMutex and classTableMutex, they must be entered in that order (CMVC 186043).
+			 */
 
-		threadEnv->monitor_enter(verifyData->verifierMutex);
+			threadEnv->monitor_enter(verifyData->verifierMutex);
 #endif
 
-		freeVerifyBuffers (tmpVMC->javaVM->portLibrary, verifyData);
+			freeVerifyBuffers (tmpVMC->javaVM->portLibrary, verifyData);
 
-		/* The currentAlloc, internalBufferStart, internalBufferEnd fields are NOT nested */
-		/* used in bcvalloc/bcvfree - avoid hammering it */
-		/* This should probably be moved out of the struct, but where? - split the struct by scope */
-		currentAlloc = verifyData->currentAlloc;
-		internalBufferStart = verifyData->internalBufferStart;
-		internalBufferEnd = verifyData->internalBufferEnd;
+			/* The currentAlloc, internalBufferStart, internalBufferEnd fields are NOT nested */
+			/* used in bcvalloc/bcvfree - avoid hammering it */
+			/* This should probably be moved out of the struct, but where? - split the struct by scope */
+			currentAlloc = verifyData->currentAlloc;
+			internalBufferStart = verifyData->internalBufferStart;
+			internalBufferEnd = verifyData->internalBufferEnd;
 
-		memcpy(verifyData, &savedVerifyData, sizeof(savedVerifyData));
+			memcpy(verifyData, &savedVerifyData, sizeof(savedVerifyData));
 
-		verifyData->currentAlloc = currentAlloc;
-		verifyData->internalBufferStart = internalBufferStart;
-		verifyData->internalBufferEnd = internalBufferEnd;
+			verifyData->currentAlloc = currentAlloc;
+			verifyData->internalBufferStart = internalBufferStart;
+			verifyData->internalBufferEnd = internalBufferEnd;
+		} 
 	} else {
 		Trc_RTV_j9rtv_verifierGetRAMClass_found(verifyData->vmStruct);
 	}
-
 
 	Trc_RTV_j9rtv_verifierGetRAMClass_Exit(verifyData->vmStruct);
 
@@ -240,10 +246,10 @@ findAndMatchStack (J9BytecodeVerificationData *verifyData, IDATA targetPC, IDATA
 		Trc_RTV_findAndMatchStack_StackNotFound(verifyData->vmStruct, 
 				(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 				J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 				targetPC);
 		rc = BCV_FAIL;
 		verifyData->errorDetailCode = BCV_ERR_EXPECT_STACKMAP_FRAME;
@@ -286,10 +292,10 @@ matchStack(J9BytecodeVerificationData * verifyData, J9BranchTargetStack *liveSta
 		Trc_RTV_matchStack_DepthMismatchException(verifyData->vmStruct,
 				(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 				J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 				size, targetStack->stackTopIndex);
 		rc = BCV_FAIL; /* fail - stack depth mismatch */
 		verifyData->errorDetailCode = BCV_ERR_STACK_SIZE_MISMATCH;
@@ -304,9 +310,7 @@ matchStack(J9BytecodeVerificationData * verifyData, J9BranchTargetStack *liveSta
 		goto _errorLocation;
 	}
 
-
-	/* Jazz103: 120689 */
-	/* Target stack frame flag needs to be subset of ours. See JVM sepc 4.10.1.4 */
+	/* Note: Target stack frame flag needs to be subset of ours. See JVM sepc 4.10.1.4 */
 	if (liveStack->uninitializedThis && !targetStack->uninitializedThis) {
 		rc = BCV_FAIL;
 		goto _finished;
@@ -323,36 +327,42 @@ matchStack(J9BytecodeVerificationData * verifyData, J9BranchTargetStack *liveSta
 						Trc_RTV_matchStack_OutOfMemoryException(verifyData->vmStruct,
 							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 							J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)));
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)));
 						rc = BCV_ERR_INSUFFICIENT_MEMORY;
 						goto _finished;
 					} else {
 						Trc_RTV_matchStack_IncompatibleClassException(verifyData->vmStruct,
 								(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 								J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-								J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-								J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+								J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+								J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 								(livePtr - liveStack->stackElements), *livePtr, *targetPtr);
 						rc = BCV_FAIL; /* fail - object type mismatch*/
 						goto _incompatibleType;
 					}
 				}
 			} else if (*targetPtr != BCV_BASE_TYPE_TOP) {
-				Trc_RTV_matchStack_PrimitiveMismatchException(verifyData->vmStruct,
-						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						(livePtr - liveStack->stackElements), *livePtr, *targetPtr);
-				rc = BCV_FAIL; /* fail - primitive or special mismatch */
-				goto _incompatibleType;
+				if ((*targetPtr & BCV_SPECIAL) && verifyData->createdStackMap) {
+					/* Generated stackmaps can skip the check on the target slot with BCV_SPECIAL
+					 * as this slot is set up based on the bytecode itself rather than decompressed stackmaps.
+					 */
+				} else {
+					Trc_RTV_matchStack_PrimitiveOrSpecialMismatchException(verifyData->vmStruct,
+							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
+							J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							(livePtr - liveStack->stackElements), *livePtr, *targetPtr);
+					rc = BCV_FAIL; /* fail - primitive or special mismatch */
+					goto _incompatibleType;
+				}
 			}
 		}
 		livePtr++;
@@ -392,7 +402,7 @@ _errorLocation:
 
 
 /* 
-	Walk the bytceodes linearly and verify that the recorded stack maps match.
+	Walk the bytecodes linearly and verify that the recorded stack maps match.
 
 	returns BCV_SUCCESS on success
 	returns BCV_ERR_INTERNAL_ERROR on verification error
@@ -460,12 +470,13 @@ verifyBytecodes (J9BytecodeVerificationData * verifyData)
 	UDATA errorTargetType = (UDATA)-1;
 	UDATA errorStackIndex = (UDATA)-1;
 	UDATA errorTempData = (UDATA)-1;
+	BOOLEAN isNextStack = FALSE;
 
 	Trc_RTV_verifyBytecodes_Entry(verifyData->vmStruct, 
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)));
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)));
 
 	pc = 0;
 
@@ -493,7 +504,7 @@ verifyBytecodes (J9BytecodeVerificationData * verifyData)
 	liveStack->stackBaseIndex = liveStack->stackTopIndex;
 
 	/* Jazz 105041: Initialize the 1st data slot on 'stack' with 'top' (placeholdler)
-	 * to avoid storing gargbage data type in the error message buffer
+	 * to avoid storing garbage data type in the error message buffer
 	 * when stack underflow occurs.
 	 */
 	liveStack->stackElements[liveStack->stackBaseIndex] = BCV_BASE_TYPE_TOP;
@@ -547,7 +558,7 @@ _inconsistentStack2:
 				}
 				/* Jazz 82615: Set liveStack->pc to the next pc value rather than the current pc value (start)
 				 * in the case of the matched stack frame in the current frame (liveStack)
-				 * of the detaile error message
+				 * of the detailed error message
 			 	 */
 				liveStack->pc = pc;
 				goto _mapError;
@@ -622,12 +633,18 @@ _inconsistentStack2:
 			 * it needs to step back by 1 slot to the actual data type to be manipulated by the opcode.
 			 */
 			errorStackIndex = (stackTop - liveStack->stackElements) - 1;
-			/* Always set to the location of the 1st data type on 'stack' to show up if stackTop <= stackBase */
-			if (stackTop <= stackBase) {
+			/* Always set to the location of the 1st data type on 'stack' to show up if stackTop <= stackBase
+			 * Note: this setup is disabled to avoid decoding the garbage data in the error messages
+			 * if the current stack frame is loaded from the next stack (without data on the stack)
+			 * of the stackmaps.
+			 */
+			if ((stackTop <= stackBase) && !isNextStack) {
 				errorStackIndex = stackBase - liveStack->stackElements;
 			}
 			goto _miscError;
 		}
+		/* Reset as the flag is only used for the current bytecode */
+		isNextStack = FALSE;
 
 		/* Format: 8bits action, 4bits type Y, 4bits type X */
 		type1 = (UDATA) J9JavaBytecodeVerificationTable[bc];
@@ -705,7 +722,7 @@ _inconsistentStack2:
 				} else {
 					index = PARAM_16(bcIndex, 1);
 				}
-				stackTop = pushLdcType(romClass, index, stackTop);
+				stackTop = pushLdcType(verifyData, romClass, index, stackTop);
 				break;
 
 			/* Change lookup table to generate constant of correct type */
@@ -747,7 +764,8 @@ _inconsistentStack2:
 					break;
 				} else {
 					type = (UDATA) J9JavaBytecodeArrayTypeTable[bc - JBiaload];
-					inconsistentStack |= (type != arrayType);
+					/* The operand checking for baload needs to cover the case of boolean arrays */
+					CHECK_BOOL_ARRAY(JBbaload, bc, type);
 					if (inconsistentStack) {
 						/* Jazz 82615: Set the expected data type (already in type) and the location of wrong data type
 						 * on stack when the verification error occurs.
@@ -924,8 +942,10 @@ _inconsistentStack2:
 						errorStackIndex = (stackTop - liveStack->stackElements) + 2;
 						goto _inconsistentStack;
 					}
+
 					type2 = (UDATA) J9JavaBytecodeArrayTypeTable[bc - JBiastore];
-					inconsistentStack |= (arrayType != type2);
+					/* The operand checking for bastore needs to cover the case of boolean arrays */
+					CHECK_BOOL_ARRAY(JBbastore, bc, type2);
 					if (inconsistentStack) {
 						/* Jazz 82615: Set the expected data type and the location of wrong data type 
 						 * on stack when the verification error occurs.
@@ -1136,7 +1156,7 @@ _inconsistentStack2:
 			break;
 
 		case RTV_RETURN:
-			utf8string = J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod);
+			utf8string = J9ROMMETHOD_SIGNATURE(romMethod);
 			temp = &J9UTF8_DATA(utf8string)[J9UTF8_LENGTH(utf8string) - 2];
 			returnChar = (UDATA) temp[1];
 			if (temp[0] != ')') {
@@ -1162,8 +1182,14 @@ _illegalPrimitiveReturn:
 				break;
 
 			case JBreturn1:
+			case JBreturnB:
+			case JBreturnC:
+			case JBreturnS:
+			case JBreturnZ:
 			case JBsyncReturn1:
+				/* Note: for synchronized return{B,C,S,Z}, JBgenericReturn is used */
 				if (returnChar) {
+					U_32 returnType = 0;
 					/* single character return description */
 					if ((returnChar < 'A') || (returnChar > 'Z')) {
 						inconsistentStack = TRUE;
@@ -1171,6 +1197,43 @@ _illegalPrimitiveReturn:
 					}
 					type = (UDATA) oneArgTypeCharConversion[returnChar - 'A'];
 					POP_TOS(type);
+
+					/* check methods that return char, byte, short, or bool use the right opcode */
+					if (BCV_BASE_TYPE_INT == type){
+						switch(bc) {
+						case JBreturnB:
+							returnType = BCV_BASE_TYPE_BYTE_BIT;
+							break;
+
+						case JBreturnC:
+							returnType = BCV_BASE_TYPE_CHAR_BIT;
+							break;
+
+						case JBreturnS:
+							returnType = BCV_BASE_TYPE_SHORT_BIT;
+							break;
+
+						case JBreturnZ:
+							returnType = BCV_BASE_TYPE_BOOL_BIT;
+							break;
+						/* Note: synchronized return of b,c,s,z are handled as a JBgenericReturn */
+						case JBreturn1:
+						case JBsyncReturn1:
+							returnType = BCV_BASE_TYPE_INT_BIT;
+							break;
+						default:
+							Trc_RTV_j9rtv_verifyBytecodes_Unreachable(verifyData->vmStruct,
+								(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
+								J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
+								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+								J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+								(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+								J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+								__LINE__);
+							break;
+						}
+						inconsistentStack |= returnType != baseTypeCharConversion[returnChar - 'A'];
+					}
 					if (inconsistentStack) {
 						/* Jazz 82615: Set the expected data type (already in type) and
 						 * the location of wrong data type on stack when the verification error occurs.
@@ -1179,6 +1242,7 @@ _illegalPrimitiveReturn:
 						errorStackIndex = stackTop - liveStack->stackElements;
 						goto _inconsistentStack;
 					}
+
 				} else {
 					IDATA reasonCode = 0;
 
@@ -1383,8 +1447,6 @@ _illegalPrimitiveReturn:
 					/* Jazz 82615: Save the location of receiver */
 					receiverPtr = stackTop;
 				}
-				CHECK_STACK_UNDERFLOW;
-
 			} else {
 				/* JBgetfield/JBgetstatic - even bc's */
 				if (bc == JBgetfield) {
@@ -1392,7 +1454,6 @@ _illegalPrimitiveReturn:
 					/* Jazz 82615: Save the location of receiver */
 					receiverPtr = stackTop;
 				}
-				CHECK_STACK_UNDERFLOW;
 				stackTop = pushFieldType(verifyData, utf8string, stackTop);
 			}
 
@@ -1446,6 +1507,7 @@ _illegalPrimitiveReturn:
 				utf8string = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *) info))));
 				/* Removes the args from the stack and verify the stack shape is consistent */
 				rc = j9rtv_verifyArguments(verifyData, utf8string, &stackTop);
+				CHECK_STACK_UNDERFLOW;
 				if (BCV_ERR_INSUFFICIENT_MEMORY == rc) {
 					goto _outOfMemoryError;
 				}
@@ -1469,20 +1531,30 @@ _illegalPrimitiveReturn:
 				 * cases of invokevirtual which only invoke public methods of a public class.
 				 */
 
+				/* Remove the receiver from the stack. */
+				type = POP;
 				/* Receiver compatible with MethodHandle? */
-				type = POP;		/* Remove the receiver from the stack */
-				rc = isClassCompatibleByName (verifyData, type, (U_8 *)"java/lang/invoke/MethodHandle", sizeof("java/lang/invoke/MethodHandle") - 1, &reasonCode);
+				rc = isClassCompatibleByName(verifyData, type, (U_8 *)"java/lang/invoke/MethodHandle", sizeof("java/lang/invoke/MethodHandle") - 1, &reasonCode);
+#if defined(J9VM_OPT_OPENJDK_METHODHANDLE)
+				if ((JBinvokehandle == bc) && (FALSE == rc)) {
+					if (BCV_ERR_INSUFFICIENT_MEMORY == reasonCode) {
+						goto _outOfMemoryError;
+					}
+					/* Receiver compatible with VarHandle? */
+					rc = isClassCompatibleByName(verifyData, type, (U_8 *)"java/lang/invoke/VarHandle", sizeof("java/lang/invoke/VarHandle") - 1, &reasonCode);
+				}
+#endif /* defined(J9VM_OPT_OPENJDK_METHODHANDLE) */
 				if (FALSE == rc) {
 					if (BCV_ERR_INSUFFICIENT_MEMORY == reasonCode) {
 						goto _outOfMemoryError;
 					}
 					errorType = J9NLS_BCV_ERR_RECEIVER_NOT_COMPATIBLE__ID;
-					/* Jazz 82615: Store the index of the expected data type 'java/lang/invoke/MethodHandle' for later retrieval in classNameList */
+					/* Jazz 82615: Store the index of the expected data type 'java/lang/invoke/MethodHandle'
+					 * or 'java/lang/invoke/VarHandle' for later retrieval in classNameList. */
 					errorTargetType = (UDATA)(BCV_JAVA_LANG_INVOKE_METHODHANDLE_INDEX << BCV_CLASS_INDEX_SHIFT);
 					errorStackIndex = stackTop - liveStack->stackElements;
 					goto _inconsistentStack2;
 				}
-				CHECK_STACK_UNDERFLOW;
 				stackTop = pushReturnType(verifyData, utf8string, stackTop);
 
 				break;
@@ -1493,6 +1565,7 @@ _illegalPrimitiveReturn:
 				utf8string = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(SRP_PTR_GET(callSiteData + index, J9ROMNameAndSignature*))));
 				/* Removes the args from the stack and verify the stack shape is consistent */
 				rc = j9rtv_verifyArguments(verifyData, utf8string, &stackTop);
+				CHECK_STACK_UNDERFLOW;
 				if (BCV_ERR_INSUFFICIENT_MEMORY == rc) {
 					goto _outOfMemoryError;
 				}
@@ -1511,7 +1584,6 @@ _illegalPrimitiveReturn:
 					errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 					goto _verifyError;
 				}
-				CHECK_STACK_UNDERFLOW;
 				stackTop = pushReturnType(verifyData, utf8string, stackTop);
 				break;
 			}
@@ -1521,18 +1593,17 @@ _illegalPrimitiveReturn:
 				bc = JBinvokeinterface;
 			}
 			index = PARAM_16(bcIndex, 1);
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 			if (JBinvokestaticsplit == bc) {
 				index = *(U_16 *)(J9ROMCLASS_STATICSPLITMETHODREFINDEXES(romClass) + index);
 			} else if (JBinvokespecialsplit == bc) {
 				index = *(U_16 *)(J9ROMCLASS_SPECIALSPLITMETHODREFINDEXES(romClass) + index);
 			}
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			info = &constantPool[index];
 			utf8string = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *) info))));
 			cpIndex = ((J9ROMMethodRef *) info)->classRefCPIndex;
 			classRef = (J9ROMStringRef *) &constantPool[cpIndex];
 			rc = j9rtv_verifyArguments(verifyData, utf8string, &stackTop);	/* Removes the args from the stack */
+			CHECK_STACK_UNDERFLOW;
 			if (BCV_ERR_INSUFFICIENT_MEMORY == rc) {
 				goto _outOfMemoryError;
 			}
@@ -1553,18 +1624,14 @@ _illegalPrimitiveReturn:
 			}
 			
 			if ((JBinvokestatic != bc)
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 				&& (JBinvokestaticsplit != bc)
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 			) {
 				IDATA reasonCode = 0;
 
 				type = POP;		/* Remove the receiver from the stack */
 				switch (bc) {
 				case JBinvokespecial:
-#if defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES)
 				case JBinvokespecialsplit:
-#endif /* defined(J9VM_INTERP_USE_SPLIT_SIDE_TABLES) */
 					CHECK_STACK_UNDERFLOW;
 					/* cannot use isInitMethod here b/c invokespecial may be invoking a different <init> method then the one we are in */
 					if (J9UTF8_DATA(J9ROMNAMEANDSIGNATURE_NAME(J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *) info)))[0] == '<') {
@@ -1661,7 +1728,7 @@ _illegalPrimitiveReturn:
 
 							/* the lazy evaluation would guarantee reasonCode reflects the first failure.
 							 * In all three functions, returned boolean value would indicate an error occurred and the reasonCode is set to BCV_ERR_INSUFFICIENT_MEMORY in OOM cases.
-							 * Hence, if any of the 3 conditions should fail, if it is not on OOM as readonCode would indicate, it must be a verification error.
+							 * Hence, if any of the 3 conditions should fail, if it is not on OOM as reasonCode would indicate, it must be a verification error.
 							 */
 							if ((FALSE == isClassCompatibleByName(verifyData, classIndex, J9UTF8_DATA(utf8string), J9UTF8_LENGTH(utf8string), &reasonCode))
 							|| (FALSE == isClassCompatible(verifyData, type, classIndex, &reasonCode))
@@ -1729,7 +1796,6 @@ _illegalPrimitiveReturn:
 				}
 			}
 
-			CHECK_STACK_UNDERFLOW;
 			utf8string = ((J9UTF8 *) (J9ROMNAMEANDSIGNATURE_SIGNATURE(J9ROMMETHODREF_NAMEANDSIGNATURE((J9ROMMethodRef *) info))));
 			stackTop = pushReturnType(verifyData, utf8string, stackTop);
 			break;
@@ -1743,8 +1809,6 @@ _illegalPrimitiveReturn:
 				break;
 
 			case JBnewarray:
-				index = PARAM_8(bcIndex, 1);
-				type = (UDATA) newArrayParamConversion[index];
 				POP_TOS_INTEGER;	/* pop the size of the array */
 				if (inconsistentStack) {
 					/* Jazz 82615: Set the expected data type and the location of wrong data type
@@ -1754,6 +1818,9 @@ _illegalPrimitiveReturn:
 					errorStackIndex = stackTop - liveStack->stackElements;
 					goto _inconsistentStack;
 				}
+
+				index = PARAM_8(bcIndex, 1);
+				type = (UDATA) newArrayParamConversion[index];
 				PUSH(type);	/* arity of one implicit */
 				break;
 
@@ -1946,13 +2013,30 @@ _illegalPrimitiveReturn:
 						}
 					}
 				} else {
+					BOOLEAN firstKey = TRUE;
+					I_32 currentKey = 0;
+					I_32 nextKey = 0;
 					i2 = (I_32) PARAM_32(bcIndex, 1);
 					bcIndex += 4;
 
 					pc += (I_32)i2 * 8;
 					CHECK_END;
 					for (i1 = 0; (I_32)i1 < (I_32)i2; i1++) {
+						nextKey = (I_32) PARAM_32(bcIndex, 1);
 						bcIndex += 4;
+						if (!firstKey) {
+							if (nextKey <= currentKey) {
+								verboseErrorCode = BCV_ERR_BYTECODE_ERROR;
+								storeVerifyErrorData(verifyData, (I_16)verboseErrorCode, (U_32)errorStackIndex, (UDATA)-1, (UDATA)-1, start);
+								errorType = J9NLS_CFR_ERR_BC_SWITCH_NOT_SORTED__ID;
+								errorModule = J9NLS_CFR_ERR_BC_SWITCH_NOT_SORTED__MODULE;
+								goto _verifyError;
+							}
+						} else {
+							firstKey = FALSE;
+						}
+						currentKey = nextKey;
+
 						offset32 = (I_32) PARAM_32(bcIndex, 1);
 						bcIndex += 4;
 						target = offset32 + start;
@@ -2078,14 +2162,14 @@ _illegalPrimitiveReturn:
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			break;
 
 		case RTV_BYTECODE_DUP:
 			POP_TOS_SINGLE(type);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2099,7 +2183,6 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_DUPX1:
 			POP_TOS_SINGLE(type);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2108,7 +2191,6 @@ _illegalPrimitiveReturn:
 				goto _miscError;
 			}
 			POP_TOS_SINGLE(temp1);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2123,7 +2205,6 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_DUPX2:
 			POP_TOS_SINGLE(type);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2132,12 +2213,12 @@ _illegalPrimitiveReturn:
 				goto _miscError;
 			}
 			POP_TOS_PAIR(temp1, temp2); /* use nverifyPop2 ?? */
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			PUSH(type);
@@ -2148,12 +2229,12 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_DUP2:
 			POP_TOS_PAIR(temp1, temp2);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			PUSH(temp2);
@@ -2164,16 +2245,15 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_DUP2X1:
 			POP_TOS_PAIR(type, temp1);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			POP_TOS_SINGLE(temp2);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2190,21 +2270,21 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_DUP2X2:
 			POP_TOS_PAIR(type, temp1);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			POP_TOS_PAIR(temp2, temp3);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 				verboseErrorCode = BCV_ERR_WRONG_TOP_TYPE;
-				errorStackIndex = stackTop - liveStack->stackElements;
+				/* The pair of data types should be printed out once detected as invalid */
+				errorStackIndex = stackTop - liveStack->stackElements + 1;
 				goto _miscError;
 			}
 			/* should probably do more checking to avoid bogus dup's of long/double pairs */
@@ -2218,7 +2298,6 @@ _illegalPrimitiveReturn:
 
 		case RTV_BYTECODE_SWAP:
 			POP_TOS_SINGLE(type);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2227,7 +2306,6 @@ _illegalPrimitiveReturn:
 				goto _miscError;
 			}
 			POP_TOS_SINGLE(temp1);
-			CHECK_STACK_UNDERFLOW;
 			if (inconsistentStack) {
 				/* Jazz 82615: Set the error code (a non-top type is expected on stack). */
 				errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
@@ -2275,6 +2353,7 @@ _newStack:
 				/* Load the next stack into the live stack */
 				SAVE_STACKTOP(liveStack, stackTop);
 				memcpy((UDATA *) liveStack, (UDATA *) currentMapData, verifyData->stackSize);
+				isNextStack = TRUE;
 				RELOAD_LIVESTACK;
 
 				/* Start with uninitialized_this flag for the current map data */
@@ -2292,6 +2371,18 @@ _newStack:
 					errorTempData = (UDATA)nextStackPC;
 					goto _miscError;
 				} else {
+					if ((action != RTV_RETURN) 
+					&& (bc !=JBathrow) 
+					&& (bc !=JBtableswitch) 
+					&& (bc !=JBlookupswitch)
+					&& (bc !=JBgoto)
+					&& (bc !=JBgotow)
+					) {
+						/* Jazz 82615: Set the error code when it reaches unterminated dead code. */
+						errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
+						verboseErrorCode = BCV_ERR_DEAD_CODE;
+						goto _miscError;
+					}
 					/* no more maps, skip remaining code as dead */
 					pc = length;
 				}
@@ -2301,13 +2392,13 @@ _newStack:
 
 	/* StackMap/StackMapTable attribute treat all code as live */
 	/* Flow verification allows unterminated dead code */
-	if (J9ROMCLASS_HAS_VERIFY_DATA(romClass)
-			&& (action != RTV_RETURN) 
-			&& (bc !=JBathrow) 
-			&& (bc !=JBtableswitch) 
-			&& (bc !=JBlookupswitch)
-			&& (bc !=JBgoto)
-			&& (bc !=JBgotow)) {
+	if ((action != RTV_RETURN) 
+	&& (bc !=JBathrow) 
+	&& (bc !=JBtableswitch) 
+	&& (bc !=JBlookupswitch)
+	&& (bc !=JBgoto)
+	&& (bc !=JBgotow)
+	) {
 		/* Jazz 82615: Set the error code when it reaches unterminated dead code. */
 		errorType = J9NLS_BCV_ERR_INCONSISTENT_STACK__ID;
 		verboseErrorCode = BCV_ERR_DEAD_CODE;
@@ -2343,19 +2434,19 @@ _verifyError:
 
 	Trc_RTV_verifyBytecodes_VerifyError(verifyData->vmStruct,
 		errorType, 
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)),
 		start);
 
 	Trc_RTV_verifyBytecodes_VerifyErrorBytecode(verifyData->vmStruct, 
 		(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 		J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)),
 		errorType, start, start, *(code + start));
 	BUILD_VERIFY_ERROR(errorModule, errorType);
 
@@ -2370,10 +2461,10 @@ _outOfMemoryError:
 	errorType = J9NLS_BCV_ERR_VERIFY_OUT_OF_MEMORY__ID;
 	Trc_RTV_verifyBytecodes_OutOfMemoryException(verifyData->vmStruct,
 		errorType,
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-		J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+		(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+		J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)),
 		start);
 	BUILD_VERIFY_ERROR(errorModule, errorType);
 	return BCV_ERR_INSUFFICIENT_MEMORY;
@@ -2399,10 +2490,10 @@ verifyExceptions (J9BytecodeVerificationData *verifyData)
 	IDATA reasonCode = 0;
 
 	Trc_RTV_verifyExceptions_Entry(verifyData->vmStruct, 
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)));
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)));
 	
 	/* Verify catch types are throwable */
 	exceptionInfo = J9_EXCEPTION_DATA_FROM_ROM_METHOD(romMethod);
@@ -2421,20 +2512,20 @@ verifyExceptions (J9BytecodeVerificationData *verifyData)
 					Trc_RTV_verifyExceptions_OutOfMemoryException(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)));
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)));
 					rc = BCV_ERR_INSUFFICIENT_MEMORY;
 					break;
 				} else {
 					Trc_RTV_verifyExceptions_VerifyError(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(romClass, romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(romClass, romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(romMethod)),
 						i, J9UTF8_LENGTH(catchName), J9UTF8_DATA(catchName));
 					rc = BCV_FAIL;
 					break;
@@ -2525,20 +2616,16 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 					Trc_RTV_j9rtv_verifyArguments_Unreachable(verifyData->vmStruct, 
 							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 							J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 							__LINE__);
 					mrc = BCV_FAIL;
 					break;
 				}
 
 				objectType = (UDATA) baseTypeCharConversion[*signature - 'A'];
-				/* Jazz 82615: Tagged as 'bool' when baseTypeCharConversion returns BCV_BASE_TYPE_BYTE_BIT for type 'Z' */
-				if ('Z' == *signature) {
-					boolType = TRUE;
-				}
 				signature++;
 
 				if (!objectType) {
@@ -2546,10 +2633,10 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 					Trc_RTV_j9rtv_verifyArguments_Unreachable(verifyData->vmStruct, 
 							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 							J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 							__LINE__);
 					mrc = BCV_FAIL;
 					break;
@@ -2568,37 +2655,34 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 					Trc_RTV_j9rtv_verifyArguments_OutOfMemoryException(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)));
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)));
 					mrc = BCV_ERR_INSUFFICIENT_MEMORY;
 					break;
 				} else if (BCV_ERR_INACCESSIBLE_CLASS == reasonCode) {
 					Trc_RTV_j9rtv_verifyArguments_InaccessibleClass(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)));
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)));
 					mrc = BCV_ERR_INACCESSIBLE_CLASS;
 					break;
 				} else {
 					Trc_RTV_j9rtv_verifyArguments_ObjectMismatch(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 						index, J9UTF8_LENGTH(utf8string), J9UTF8_DATA(utf8string), stackTop[index]);
 					mrc = BCV_FAIL;
 					verifyData->errorDetailCode = BCV_ERR_INCOMPATIBLE_TYPE; /* failure - object type mismatch */
 					verifyData->errorTargetType = objectType;
-					if (boolType) {
-						verifyData->errorTargetType |= BCV_BASE_TYPE_BOOL_BIT;
-					}
 					break;
 				}
 			}
@@ -2611,17 +2695,22 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 				Trc_RTV_j9rtv_verifyArguments_Unreachable(verifyData->vmStruct,
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 						__LINE__);
 				mrc = BCV_FAIL;
 				break;
 			}
 
 			baseType = (UDATA) argTypeCharConversion[*signature - 'A'];
-			/* Jazz 82615: Tagged as 'bool' when argTypeCharConversion returns BCV_BASE_TYPE_BYTE_BIT for type 'Z' */
+			/* Jazz 82615: Tagged as 'bool' when argTypeCharConversion returns BCV_BASE_TYPE_INT for type 'Z'
+			 * Note: for base type, type B (byte) and type Z (boolean) correspond to the verification type int.
+			 * In such case, there is no way to determine whether the original type is byte or boolean after the
+			 * conversion of argument type. To ensure type Z is correctly generated to the error messages, we need
+			 * to filter it out here by checking the type in signature.
+			 */
 			if ('Z' == *signature) {
 				boolType = TRUE;
 			}
@@ -2632,10 +2721,10 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 				Trc_RTV_j9rtv_verifyArguments_Unreachable(verifyData->vmStruct, 
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 						__LINE__);
 				mrc = BCV_FAIL;
 				break;
@@ -2645,17 +2734,14 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 				Trc_RTV_j9rtv_verifyArguments_PrimitiveMismatch(verifyData->vmStruct, 
 						(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 						J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-						J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+						(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+						J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 						index, J9UTF8_LENGTH(utf8string), J9UTF8_DATA(utf8string), stackTop[index]);
 				mrc = BCV_FAIL;
 				verifyData->errorDetailCode = BCV_ERR_INCOMPATIBLE_TYPE; /* failure - primitive mismatch */
-				verifyData->errorTargetType = baseType;
-				if (boolType) {
-					verifyData->errorTargetType |= BCV_BASE_TYPE_BOOL_BIT;
-				}
+				verifyData->errorTargetType = (TRUE == boolType) ? BCV_BASE_TYPE_BOOL : baseType;
 				break;
 			}
 
@@ -2665,17 +2751,14 @@ j9rtv_verifyArguments (J9BytecodeVerificationData *verifyData, J9UTF8 * utf8stri
 					Trc_RTV_j9rtv_verifyArguments_WidePrimitiveMismatch(verifyData->vmStruct, 
 							(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 							J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-							J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+							(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+							J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 							index, J9UTF8_LENGTH(utf8string), J9UTF8_DATA(utf8string));
 					mrc = BCV_FAIL;
 					verifyData->errorDetailCode = BCV_ERR_INCOMPATIBLE_TYPE; /* failure - wide primitive mismatch */
-					verifyData->errorTargetType = baseType;
-					if (boolType) {
-						verifyData->errorTargetType |= BCV_BASE_TYPE_BOOL_BIT;
-					}
+					verifyData->errorTargetType = (TRUE == boolType) ? BCV_BASE_TYPE_BOOL : baseType;
 					break;
 				}
 			}
@@ -2719,10 +2802,10 @@ nextStack (J9BytecodeVerificationData *verifyData, UDATA *nextMapIndex, IDATA *n
 	Trc_RTV_nextStack_Result(verifyData->vmStruct, 
 			(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 			J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-			J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+			(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+			J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 			verifyData->stackMapsCount, *nextMapIndex, *nextStackPC, 
 			J9_BYTECODE_SIZE_FROM_ROM_METHOD(verifyData->romMethod));
 	return returnStack;
@@ -2751,10 +2834,10 @@ nextExceptionStart (J9BytecodeVerificationData *verifyData, J9ROMMethod *romMeth
 		Trc_RTV_nextExceptionStart_Result(verifyData->vmStruct, 
 				(UDATA) J9UTF8_LENGTH(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
 				J9UTF8_DATA(J9ROMCLASS_CLASSNAME(verifyData->romClass)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_NAME(verifyData->romClass, verifyData->romMethod)),
-				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
-				J9UTF8_DATA(J9ROMMETHOD_GET_SIGNATURE(verifyData->romClass, verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_NAME(verifyData->romMethod)),
+				(UDATA) J9UTF8_LENGTH(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
+				J9UTF8_DATA(J9ROMMETHOD_SIGNATURE(verifyData->romMethod)),
 				exceptionInfo->catchCount, lastPC, nextPC, 
 				J9_BYTECODE_SIZE_FROM_ROM_METHOD(romMethod));
 	}

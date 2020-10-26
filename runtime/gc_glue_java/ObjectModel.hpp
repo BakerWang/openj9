@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -115,6 +114,8 @@ public:
 		SCAN_CLASSLOADER_OBJECT = 6,
 		SCAN_ATOMIC_MARKABLE_REFERENCE_OBJECT = 7,
 		SCAN_OWNABLESYNCHRONIZER_OBJECT = 8,
+		SCAN_MIXED_OBJECT_LINKED = 9,
+		SCAN_FLATTENED_ARRAY_OBJECT = 10
 	};
 
 	/**
@@ -134,14 +135,14 @@ public:
 private:
 	/**
 	 * Determine the scan type for an instant of the specified class.
-	 * The class has the J9_JAVA_CLASS_GC_SPECIAL bit set.
+	 * The class has the J9AccClassGCSpecial bit set.
 	 * @param[in] objectClazz the class of the object to identify
 	 * @return one of the ScanType constants 
 	 */
 	ScanType getSpecialClassScanType(J9Class *objectClazz);
 	
 	/**
-	 * Examine all classes as they are loaded to determine if they require the J9_JAVA_CLASS_GC_SPECIAL bit.
+	 * Examine all classes as they are loaded to determine if they require the J9AccClassGCSpecial bit.
 	 * These classes are handled specially by GC_ObjectModel::getScanType()
 	 */
 	static void internalClassLoadHook(J9HookInterface** hook, UDATA eventNum, void* eventData, void* userData);
@@ -160,7 +161,7 @@ private:
 	MMINLINE UDATA
 	getClassShape(J9Object *objectPtr)
 	{
-		J9Class* clazz = J9GC_J9OBJECT_CLAZZ(objectPtr);
+		J9Class* clazz = J9GC_J9OBJECT_CLAZZ(objectPtr, this);
 		return J9GC_CLASS_SHAPE(clazz);
 	}
 
@@ -178,15 +179,19 @@ public:
 		switch(J9GC_CLASS_SHAPE(clazz)) {
 		case OBJECT_HEADER_SHAPE_MIXED:
 		{
-			UDATA classFlags = J9CLASS_FLAGS(clazz) & (J9_JAVA_CLASS_REFERENCE_MASK | J9_JAVA_CLASS_GC_SPECIAL | J9_JAVA_CLASS_OWNABLE_SYNCHRONIZER);
+			UDATA classFlags = J9CLASS_FLAGS(clazz) & (J9AccClassReferenceMask | J9AccClassGCSpecial | J9AccClassOwnableSynchronizer);
 			if (0 == classFlags) {
-				result = SCAN_MIXED_OBJECT;
+				if (0 != clazz->selfReferencingField1) {
+					result = SCAN_MIXED_OBJECT_LINKED;
+				} else {
+					result = SCAN_MIXED_OBJECT;
+				}
 			} else {
-				if (0 != (classFlags & J9_JAVA_CLASS_REFERENCE_MASK)) {
+				if (0 != (classFlags & J9AccClassReferenceMask)) {
 					result = SCAN_REFERENCE_MIXED_OBJECT;
-				} else if (0 != (classFlags & J9_JAVA_CLASS_GC_SPECIAL)) {
+				} else if (0 != (classFlags & J9AccClassGCSpecial)) {
 					result = getSpecialClassScanType(clazz);
-				} else if (0 != (classFlags & J9_JAVA_CLASS_OWNABLE_SYNCHRONIZER)) {
+				} else if (0 != (classFlags & J9AccClassOwnableSynchronizer)) {
 					result = SCAN_OWNABLESYNCHRONIZER_OBJECT;
 				} else {
 					/* Assert_MM_unreachable(); */
@@ -196,7 +201,15 @@ public:
 			break;
 		}
 		case OBJECT_HEADER_SHAPE_POINTERS:
-			result = SCAN_POINTER_ARRAY_OBJECT;
+			if (J9_IS_J9CLASS_FLATTENED(clazz)) {
+				if (J9CLASS_HAS_REFERENCES(((J9ArrayClass *)clazz)->leafComponentType)) {
+					result = SCAN_FLATTENED_ARRAY_OBJECT;
+				} else {
+					result = SCAN_PRIMITIVE_ARRAY_OBJECT;
+				}
+			} else {
+				result = SCAN_POINTER_ARRAY_OBJECT;
+			}
 			break;
 		case OBJECT_HEADER_SHAPE_DOUBLES:
 		case OBJECT_HEADER_SHAPE_BYTES:
@@ -215,7 +228,7 @@ public:
 	MMINLINE ScanType
 	getScanType(J9Object *objectPtr)
 	{
-		J9Class *clazz = J9GC_J9OBJECT_CLAZZ(objectPtr);
+		J9Class *clazz = J9GC_J9OBJECT_CLAZZ(objectPtr, this);
 		return getScanType(clazz);
 	}
 	
@@ -251,7 +264,7 @@ public:
 	MMINLINE bool
 	isObjectArray(J9Object *objectPtr)
 	{
-		J9Class* clazz = J9GC_J9OBJECT_CLAZZ(objectPtr);
+		J9Class* clazz = J9GC_J9OBJECT_CLAZZ(objectPtr, this);
 		return (OBJECT_HEADER_SHAPE_POINTERS == J9GC_CLASS_SHAPE(clazz));
 	}
 
@@ -556,7 +569,7 @@ public:
 	}
 
 	/**
-	 * Extract the size from an unforwarded object.
+	 * Extract the size (as getSizeInElements()) from an unforwarded object
 	 *
 	 * This method will assert if the object is not indexable or has been marked as forwarded.
 	 *
@@ -574,20 +587,59 @@ public:
 		 * pointer if another thread copied the object underneath us). In non-compressed, this field should still be readable
 		 * out of the heap.
 		 */
-#if defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER)
-		uint32_t size = forwardedHeader->getPreservedOverlap();
-#else /* defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER) */
-		uint32_t size = ((J9IndexableObjectContiguous *)forwardedHeader->getObject())->size;
-#endif /* defined (OMR_INTERP_COMPRESSED_OBJECT_HEADER) */
+		uint32_t size = 0;
+#if defined (OMR_GC_COMPRESSED_POINTERS)
+		if (compressObjectReferences()) {
+			size = forwardedHeader->getPreservedOverlap();
+		} else
+#endif /* defined (OMR_GC_COMPRESSED_POINTERS) */
+		{
+			size = ((J9IndexableObjectContiguousFull *)forwardedHeader->getObject())->size;
+		}
 
-#if defined(OMR_GC_HYBRID_ARRAYLETS)
 		if (0 == size) {
 			/* Discontiguous */
-			size = ((J9IndexableObjectDiscontiguous *)forwardedHeader->getObject())->size;
+			if (compressObjectReferences()) {
+				size = ((J9IndexableObjectDiscontiguousCompressed *)forwardedHeader->getObject())->size;
+			} else {
+				size = ((J9IndexableObjectDiscontiguousFull *)forwardedHeader->getObject())->size;
+			}
 		}
-#endif
 
 		return size;
+	}
+	
+	/**
+	 * Extract the array layout from preserved info in Forwarded header
+	 * (this mimics getArrayLayout())
+	 *
+	 * @param[in] forwardedHeader pointer to the MM_ForwardedHeader instance encapsulating the object
+	 * @return the ArrayLayout for the forwarded object
+	 */
+	GC_ArrayletObjectModel::ArrayLayout
+	getPreservedArrayLayout(MM_ForwardedHeader *forwardedHeader)
+	{
+		GC_ArrayletObjectModel::ArrayLayout layout = GC_ArrayletObjectModel::InlineContiguous;
+		 uint32_t size = 0;
+#if defined (OMR_GC_COMPRESSED_POINTERS)
+		if (compressObjectReferences()) {
+			size = forwardedHeader->getPreservedOverlap();
+		} else
+#endif /* defined (OMR_GC_COMPRESSED_POINTERS) */
+		{
+			size = ((J9IndexableObjectContiguousFull *)forwardedHeader->getObject())->size;
+		}
+		
+		if (0 != size) {
+			return layout;
+		}
+
+		/* we know we are dealing with heap object, so we don't need to check against _arrayletRangeBase/Top, like getArrayLayout does */
+		J9Class *clazz = getPreservedClass(forwardedHeader);
+		uintptr_t dataSizeInBytes = _indexableObjectModel->getDataSizeInBytes(clazz, getPreservedIndexableSize(forwardedHeader));
+		layout = _indexableObjectModel->getArrayletLayout(clazz, dataSizeInBytes);
+		
+		return layout;	
 	}
 
 	/**
@@ -626,10 +678,11 @@ public:
 		} else if (hasBeenHashed(getPreservedFlags(forwardedHeader))) {
 			/* The object has been hashed and has not been moved so we must store the previous address into the hashcode slot at hashcode offset. */
 			uintptr_t hashOffset;
-			if (isIndexable(destinationObjectPtr)) {
-				hashOffset = _indexableObjectModel->getHashcodeOffset((J9IndexableObject *)destinationObjectPtr);
+			J9Class *clazz = getPreservedClass(forwardedHeader);
+			if (isIndexable(clazz)) {
+				hashOffset = _indexableObjectModel->getHashcodeOffset(clazz, getPreservedArrayLayout(forwardedHeader), getPreservedIndexableSize(forwardedHeader));
 			} else {
-				hashOffset = _mixedObjectModel->getHashcodeOffset(destinationObjectPtr);
+				hashOffset = _mixedObjectModel->getHashcodeOffset(clazz);
 			}
 			uint32_t *hashCodePointer = (uint32_t*)((uint8_t*) destinationObjectPtr + hashOffset);
 			*hashCodePointer = convertValueToHash(_javaVM, (uintptr_t)forwardedHeader->getObject());
@@ -670,7 +723,7 @@ public:
 	MMINLINE bool
 	isOverflowBitSet(J9Object *objectPtr)
 	{
-		return (GC_OVERFLOW == (J9GC_J9OBJECT_FLAGS_FROM_CLAZZ(objectPtr) & GC_OVERFLOW));
+		return (GC_OVERFLOW == (J9GC_J9OBJECT_FLAGS_FROM_CLAZZ(objectPtr, this) & GC_OVERFLOW));
 	}
 #endif /* defined(OMR_GC_REALTIME) */
 
@@ -685,7 +738,11 @@ public:
 	{
 		uintptr_t classBits = (uintptr_t)clazz;
 		uintptr_t flagsBits = flags & (uintptr_t)OMR_OBJECT_METADATA_FLAGS_MASK;
-		*(getObjectHeaderSlotAddress(objectPtr)) = (fomrobject_t)(classBits | flagsBits);
+		if (compressObjectReferences()) {
+			*((uint32_t*)getObjectHeaderSlotAddress(objectPtr)) = (uint32_t)(classBits | flagsBits);
+		} else {
+			*((uintptr_t*)getObjectHeaderSlotAddress(objectPtr)) = (classBits | flagsBits);
+		}
 	}
 
 	/**

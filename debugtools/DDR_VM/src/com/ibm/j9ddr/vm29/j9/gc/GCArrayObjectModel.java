@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.j9ddr.vm29.j9.gc;
 
@@ -42,20 +42,14 @@ abstract class GCArrayObjectModel extends GCBase
 	 */
 	public static GCArrayObjectModel from() throws CorruptDataException
 	{
-		if (J9BuildFlags.gc_arraylets) {
-			AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_ARRAYLET_OBJECT_MODEL_VERSION);
-			switch (version.getAlgorithmVersion()) {
-				// Add case statements to handle new algorithm versions
-				default:
-					return new GCArrayletObjectModel_V1(); 
-			}
-		} else {
-			AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_CONTIGUOUS_ARRAY_OBJECT_MODEL_VERSION);
-			switch (version.getAlgorithmVersion()) {
-				// Add case statements to handle new algorithm versions
-				default:
-					return new GCContiguousArrayObjectModel_V1();
-			}
+		AlgorithmVersion version = AlgorithmVersion.getVersionOf(AlgorithmVersion.GC_ARRAYLET_OBJECT_MODEL_VERSION);
+		switch (version.getAlgorithmVersion()) {
+			// Add case statements to handle new algorithm versions
+			case 0:
+			case 1:
+				return new GCArrayletObjectModel_V1();
+			default:
+				return new GCArrayletObjectModel_V2();
 		}
 	}
 

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef cfreader_h
@@ -69,11 +69,12 @@
 
 #define	CFR_STACKMAP_TYPE_INT_ARRAY				0x09
 #define	CFR_STACKMAP_TYPE_FLOAT_ARRAY			0x0A
-#define	CFR_STACKMAP_TYPE_DOUBLE_ARRAY		0x0B
+#define	CFR_STACKMAP_TYPE_DOUBLE_ARRAY			0x0B
 #define	CFR_STACKMAP_TYPE_LONG_ARRAY			0x0C
 #define	CFR_STACKMAP_TYPE_SHORT_ARRAY			0x0D
 #define	CFR_STACKMAP_TYPE_BYTE_ARRAY			0x0E
 #define	CFR_STACKMAP_TYPE_CHAR_ARRAY			0x0F
+#define	CFR_STACKMAP_TYPE_BOOL_ARRAY			0x10
 
 #define	CFR_METHOD_NAME_INIT	1
 #define	CFR_METHOD_NAME_CLINIT	2
@@ -113,6 +114,35 @@
 	(freePointer += size * sizeof(type)), \
 	(freePointer < segmentEnd))
 
+#define PARAM_8(index, offset) ((index) [offset])
+
+#ifdef J9VM_ENV_LITTLE_ENDIAN
+#define PARAM_16(index, offset)	\
+	( ( ((U_16) (index)[offset])			)	\
+	| ( ((U_16) (index)[offset + 1]) << 8)	\
+	)
+#else
+#define PARAM_16(index, offset)	\
+	( ( ((U_16) (index)[offset]) << 8)	\
+	| ( ((U_16) (index)[offset + 1])			)	\
+	)
+#endif
+
+#ifdef J9VM_ENV_LITTLE_ENDIAN
+#define PARAM_32(index, offset)						\
+	( ( ((U_32) (index)[offset])					)	\
+	| ( ((U_32) (index)[offset + 1]) << 8 )	\
+	| ( ((U_32) (index)[offset + 2]) << 16)	\
+	| ( ((U_32) (index)[offset + 3]) << 24)	\
+	)
+#else
+#define PARAM_32(index, offset)						\
+	( ( ((U_32) (index)[offset])		 << 24)	\
+	| ( ((U_32) (index)[offset + 1]) << 16)	\
+	| ( ((U_32) (index)[offset + 2]) << 8 )	\
+	| ( ((U_32) (index)[offset + 3])			)	\
+	)
+#endif
 
 #define NEXT_U8(value, index) (value = *((index)++))
 #define NEXT_U16(value, index) ((value = ((U_16)(index)[0] << 8) | (U_16)(index)[1]), index += 2, value)

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include <stdlib.h>
@@ -29,7 +29,6 @@
 #include "cfr.h"
 #include "cfreader.h"
 #include "j2sever.h"
-#include "j9socket.h"
 #include "j9protos.h"
 #include "j9consts.h"
 #include "jimage.h"
@@ -58,13 +57,13 @@ static IDATA readZip (J9JavaVM * javaVM, J9ClassPathEntry * cpEntry);
 static IDATA convertToOSFilename (J9JavaVM * javaVM, U_8 * dir, UDATA dirLength, U_8 * moduleName, U_8 * className, UDATA classNameLength);
 static IDATA checkSunClassFileBuffers (J9JavaVM * javaVM, U_32 sunClassFileSize);
 static IDATA searchClassInModule(J9VMThread * vmThread, J9Module * j9module, U_8 * className, UDATA classNameLength, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer);
-static IDATA searchClassInClassPath(J9VMThread * vmThread, J9ClassPathEntry * classPath, UDATA classPathCount, U_8 * className, UDATA classNameLength, UDATA flags, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer);
+static IDATA searchClassInClassPath(J9VMThread * vmThread, J9ClassPathEntry * classPath, UDATA classPathCount, U_8 * className, UDATA classNameLength, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer);
 static IDATA searchClassInPatchPaths(J9VMThread * vmThread, J9ClassPathEntry * patchPaths, UDATA patchPathCount, U_8 * className, UDATA classNameLength, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer);
 static IDATA searchClassInCPEntry(J9VMThread * vmThread, J9ClassPathEntry * cpEntry, J9Module * j9module, U_8 * moduleName, U_8 * className, UDATA classNameLength, BOOLEAN verbose);
 static IDATA readFileFromJImage (J9VMThread * vmThread, J9Module * j9module, U_8 * moduleName, J9ClassPathEntry *cpEntry);
 
 IDATA 
-findLocallyDefinedClass(J9VMThread * vmThread, J9Module * j9module, U_8 * className, U_32 classNameLength, J9ClassLoader * classLoader, J9ClassPathEntry * classPath, UDATA classPathEntryCount, UDATA options, UDATA flags, J9TranslationLocalBuffer *localBuffer)
+findLocallyDefinedClass(J9VMThread * vmThread, J9Module * j9module, U_8 * className, U_32 classNameLength, J9ClassLoader * classLoader, J9ClassPathEntry * classPath, UDATA classPathEntryCount, UDATA options, J9TranslationLocalBuffer *localBuffer)
 {
 	IDATA result = 0;
 	J9JavaVM *javaVM = vmThread->javaVM;
@@ -102,7 +101,7 @@ findLocallyDefinedClass(J9VMThread * vmThread, J9Module * j9module, U_8 * classN
 	Trc_BCU_findLocallyDefinedClass_Entry(mbString, classPathEntryCount);
 	
 	/* Search patch path of the module before looking up in bootclasspath */
-	if (J2SE_VERSION(javaVM) >= J2SE_19) {
+	if (J2SE_VERSION(javaVM) >= J2SE_V11) {
 		if (NULL == module) {
 			if (J9_ARE_NO_BITS_SET(javaVM->runtimeFlags, J9_RUNTIME_JAVA_BASE_MODULE_CREATED)) {
 				module = javaVM->javaBaseModule;
@@ -169,7 +168,7 @@ findLocallyDefinedClass(J9VMThread * vmThread, J9Module * j9module, U_8 * classN
 	}
 
 	/* If the class is still not found, search it in classpath */
-	result = searchClassInClassPath(vmThread, classPath, classPathEntryCount, mbString, mbLength, flags, verbose, localBuffer);
+	result = searchClassInClassPath(vmThread, classPath, classPathEntryCount, mbString, mbLength, verbose, localBuffer);
 
 _end:
 	if (0 != result) {
@@ -201,7 +200,7 @@ searchClassInModule(J9VMThread * vmThread, J9Module * j9module, U_8 * className,
 {
 	J9JavaVM *javaVM = vmThread->javaVM;
 	char moduleNameBuf[J9VM_PACKAGE_NAME_BUFFER_LENGTH];
-	char *moduleName = moduleNameBuf;
+	char *moduleName = NULL;
 	BOOLEAN freeModuleName = FALSE;
 	IDATA rc = 1;
 	PORT_ACCESS_FROM_JAVAVM(javaVM);
@@ -213,7 +212,7 @@ searchClassInModule(J9VMThread * vmThread, J9Module * j9module, U_8 * className,
 		moduleName = JAVA_BASE_MODULE;
 	} else {
 		moduleName = J9_VM_FUNCTION(vmThread, copyStringToUTF8WithMemAlloc)(
-			vmThread, j9module->moduleName, J9_STR_NONE, "", moduleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH);
+			vmThread, j9module->moduleName, J9_STR_NULL_TERMINATE_RESULT, "", 0, moduleNameBuf, J9VM_PACKAGE_NAME_BUFFER_LENGTH, NULL);
 		if (NULL == moduleName) {
 			rc = -1;
 			goto _end;
@@ -243,14 +242,13 @@ _end:
  * @param [in] classPathCount number of entries in classPath array
  * @param [in] className name of the class to be searched
  * @param [in] classNameLength length of the className
- * @param [in] flags flags to control which class path entries should be searched
  * @param [in] verbose if TRUE record the class loading stats
  * @param [in/out] localBuffer contains values for entryIndex, loadLocationType and cpEntryUsed. This pointer can't be NULL.
  *
  * @return 0 on success, 1 if the class is not found, -1 on error
  */
 static IDATA
-searchClassInClassPath(J9VMThread * vmThread, J9ClassPathEntry * classPath, UDATA classPathCount, U_8 * className, UDATA classNameLength, UDATA flags, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer)
+searchClassInClassPath(J9VMThread * vmThread, J9ClassPathEntry * classPath, UDATA classPathCount, U_8 * className, UDATA classNameLength, BOOLEAN verbose, J9TranslationLocalBuffer *localBuffer)
 {
 	J9JavaVM *javaVM = vmThread->javaVM;
 	J9InternalVMFunctions const * const vmFuncs = javaVM->internalVMFunctions;
@@ -263,19 +261,6 @@ searchClassInClassPath(J9VMThread * vmThread, J9ClassPathEntry * classPath, UDAT
 
 	for (i = 0; i < classPathCount; i++) {
 		cpEntry = &classPath[i];
-		/* 
-		 * should we consider this entry? This is important for J2ME VMs, where 
-		 * the classpath may contain a mix of BP and CP entries 
-		 */
-		if (flags & BCU_BOOTSTRAP_ENTRIES_ONLY) {
-			if (!(cpEntry->flags & CPE_FLAG_BOOTSTRAP)) {
-				continue;
-			}
-		} else if (flags & BCU_NON_BOOTSTRAP_ENTRIES_ONLY) {
-			if ( cpEntry->flags & CPE_FLAG_BOOTSTRAP) {
-				continue;
-			}
-		}
 
 		/* Warm up the entry */
 		vmFuncs->initializeClassPathEntry(javaVM, cpEntry);
@@ -486,7 +471,7 @@ convertToOSFilename (J9JavaVM * javaVM, U_8 * dir, UDATA dirLength, U_8 * module
 
 /* 
 	Verify that the internal dynamic loader buffers used to hold the Sun class file are large enough
-	to accomodate @sunClassFileSize bytes.  Grow buffers if neccessary.
+	to accommodate @sunClassFileSize bytes.  Grow buffers if necessary.
 
 	Return 0 on success, non-zero on error.
 */

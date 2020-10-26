@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #ifndef J9PROTOS_H
@@ -115,8 +115,6 @@ typedef J9RelocationStruct relocateStruct;
 
 #include "jniinv_api.h"
 
-#include "jvmti_api.h"
-
 #include "rasdump_api.h"
 
 #include "rastrace_api.h"
@@ -155,7 +153,7 @@ I_32 numCodeSets (void);
 
 /* X86 for MS compilers, __i386__ for GNU compilers */
 
-#if !defined(J9_SOFT_FLOAT) && (defined(_X86_) || defined (WIN32_IBMC) || defined (__i386__) || defined(J9HAMMER))
+#if !defined(J9_SOFT_FLOAT) && (defined(_X86_) || defined (__i386__) || defined(J9HAMMER) || defined(OSX))
 
 #define 	J9_SETUP_FPU_STATE() helperInitializeFPU()
 
@@ -240,7 +238,6 @@ I_32 numCodeSets (void);
 #define _J9VMACCESSCONTROL_
 extern J9_CFUNC void  internalExitVMToJNI (J9VMThread *currentThread);
 extern J9_CFUNC void  internalEnterVMFromJNI (J9VMThread *currentThread);
-extern J9_CFUNC void  internalReleaseVMAccessInJNI (J9VMThread *vmThread);
 extern J9_CFUNC void  internalReleaseVMAccess (J9VMThread *vmThread);
 extern J9_CFUNC void  internalAcquireVMAccess (J9VMThread *vmThread);
 extern J9_CFUNC IDATA  internalTryAcquireVMAccess (J9VMThread *vmThread);
@@ -993,7 +990,6 @@ extern J9_CFUNC UDATA  dispatchBigJNICall (J9VMThread *vmThread, void *functionA
 extern J9_CFUNC UDATA  internalCreateBaseTypePrimitiveAndArrayClasses (J9VMThread *currentThread);
 extern J9_CFUNC struct J9Class*  internalFindClassUTF8 (J9VMThread *currentThread, U_8 *className, UDATA classNameLength, J9ClassLoader *classLoader, UDATA options);
 extern J9_CFUNC struct J9Class*  internalFindKnownClass (J9VMThread *currentThread, UDATA index, UDATA flags);
-extern J9_CFUNC void  fixUnsafeMethods (J9VMThread* vmThread, jclass clazz);
 #endif /* _J9VMCLASSSUPPORT_ */
 
 /* J9SourceJvmriSupport*/
@@ -1071,7 +1067,6 @@ extern J9_CFUNC void  helperInitializeFPU (void);
 #ifndef _J9VMINITIALIZEVM_
 #define _J9VMINITIALIZEVM_
 extern J9_CFUNC void  initializeExecutionModel (J9VMThread *currentThread);
-extern J9_CFUNC void  installJitBytecodes (J9JavaVM *javaVM);
 #endif /* _J9VMINITIALIZEVM_ */
 
 /* J9VMMethodUtils*/
@@ -1099,8 +1094,6 @@ extern J9_CFUNC UDATA * getNextStackMapFrame(U_32 *stackMap, UDATA *previousFram
 extern J9_CFUNC void  jitResetAllUntranslateableMethods (J9VMThread *vmThread);
 #endif /* J9VM_JIT_FULL_SPEED_DEBUG &&  J9VM_INTERP_NATIVE_SUPPORT */
 
-extern J9_CFUNC IDATA dumpJitInfo(J9VMThread *thread, char *label, J9RASdumpContext *context);
-
 extern J9_CFUNC void  jitConvertStoredDoubleRegisterToSingle (U_64 * doublePtr, U_32 * singlePtr);
 #endif /* _J9VMJITDEBUGHELPERS_ */
 
@@ -1117,13 +1110,15 @@ extern J9_CFUNC struct J9Class*  jitGetClassInClassloaderFromUTF8 (J9VMThread *v
 extern J9_CFUNC UDATA  jitFieldsAreIdentical (J9VMThread *vmStruct, J9ConstantPool *cp1, UDATA index1, J9ConstantPool *cp2, UDATA index2, UDATA isStatic);
 extern J9_CFUNC IDATA  jitCTResolveInstanceFieldRefWithMethod (J9VMThread *vmStruct, J9Method *method, UDATA fieldIndex, UDATA resolveFlags, J9ROMFieldShape **resolvedField);
 extern J9_CFUNC struct J9Method*  jitGetInterfaceMethodFromCP (J9VMThread *vmThread, J9ConstantPool *constantPool, UDATA cpIndex, J9Class* lookupClass);
+extern J9_CFUNC struct J9UTF8* jitGetConstantDynamicTypeFromCP(J9VMThread *currentThread, J9ConstantPool *constantPool, UDATA cpIndex);
 extern J9_CFUNC void*  jitGetCountingSendTarget (J9VMThread *vmThread, J9Method *ramMethod);
 extern J9_CFUNC void  jitResetAllMethodsAtStartup (J9VMThread *vmContext);
 extern J9_CFUNC struct J9Class*  jitGetInterfaceITableIndexFromCP (J9VMThread *vmThread, J9ConstantPool *constantPool, UDATA cpIndex, UDATA* pITableIndex);
+extern J9_CFUNC struct J9Method*  jitGetImproperInterfaceMethodFromCP (J9VMThread *vmThread, J9ConstantPool *constantPool, UDATA cpIndex, UDATA* nonFinalObjectMethodVTableOffset);
 extern J9_CFUNC void  jitAcquireClassTableMutex (J9VMThread *vmThread);
 extern J9_CFUNC void*  jitCTResolveStaticFieldRefWithMethod (J9VMThread *vmStruct, J9Method *method, UDATA fieldIndex, UDATA resolveFlags, J9ROMFieldShape **resolvedField);
 extern J9_CFUNC void  jitReleaseClassTableMutex (J9VMThread *vmThread);
-extern J9_CFUNC UDATA  jitGetInterfaceVTableIndexFromCP (J9VMThread *vmThread, J9ConstantPool *constantPool, UDATA cpIndex, J9Class* lookupClass);
+extern J9_CFUNC UDATA  jitGetInterfaceVTableOffsetFromCP (J9VMThread *vmThread, J9ConstantPool *constantPool, UDATA cpIndex, J9Class* lookupClass);
 extern J9_CFUNC void  jitParseSignature (const J9UTF8 *signature, U_8 *paramBuffer, UDATA *paramElements, UDATA *parmSlots);
 extern J9_CFUNC UDATA jitMethodEnterTracingEnabled(J9VMThread *currentThread, J9Method *method);
 extern J9_CFUNC UDATA jitMethodExitTracingEnabled(J9VMThread *currentThread, J9Method *method);
@@ -1136,6 +1131,7 @@ extern J9_CFUNC UDATA jitGetRealCPIndex(J9VMThread *currentThread, J9ROMClass *r
 extern J9_CFUNC struct J9Method* jitGetJ9MethodUsingIndex(J9VMThread *currentThread, J9ConstantPool *constantPool, UDATA cpOrSplitIndex);
 extern J9_CFUNC struct J9Method* jitResolveStaticMethodRef(J9VMThread *vmStruct, J9ConstantPool *constantPool, UDATA cpOrSplitIndex, UDATA resolveFlags);
 extern J9_CFUNC struct J9Method* jitResolveSpecialMethodRef(J9VMThread *vmStruct, J9ConstantPool *constantPool, UDATA cpOrSplitIndex, UDATA resolveFlags);
+extern J9_CFUNC struct J9Class * jitGetDeclaringClassOfROMField(J9VMThread *vmStruct, J9Class *clazz, J9ROMFieldShape *romField);
 
 #endif /* J9VM_INTERP_NATIVE_SUPPORT*/
 #endif /* _J9VMJITNATIVECOMPILESUPPORT_ */
@@ -1164,13 +1160,14 @@ extern J9_CFUNC UDATA  jitTranslateMethod (J9VMThread *vmThread, J9Method *metho
 extern J9_CFUNC U_8*  compressUTF8 (J9VMThread * vmThread, U_8 * data, UDATA length, UDATA * compressedLength);
 extern J9_CFUNC jlong  JNICALL getStaticLongField (JNIEnv *env, jclass clazz, jfieldID fieldID);
 extern J9_CFUNC void  JNICALL setStaticIntField (JNIEnv *env, jclass clazz, jfieldID fieldID, jint value);
+extern J9_CFUNC void  JNICALL setStaticFloatField (JNIEnv *env, jclass cls, jfieldID fieldID, jfloat value);
+extern J9_CFUNC void  JNICALL setStaticDoubleField (JNIEnv *env, jclass cls, jfieldID fieldID, jdouble value);
+extern J9_CFUNC void  JNICALL setStaticLongField (JNIEnv *env, jclass cls, jfieldID fieldID, jlong value);
 extern J9_CFUNC void  JNICALL getStringUTFRegion (JNIEnv *env, jstring str, jsize start, jsize len, char *buf);
 extern J9_CFUNC jint  JNICALL getStaticIntField (JNIEnv *env, jclass clazz, jfieldID fieldID);
 extern J9_CFUNC void  JNICALL releaseStringChars (JNIEnv *env, jstring string, const jchar * chars);
 extern J9_CFUNC void  JNICALL releaseStringCharsUTF (JNIEnv *env, jstring string, const char * chars);
-extern J9_CFUNC void  JNICALL setDoubleFieldIndirect (JNIEnv *env, jobject obj, jfieldID fieldID, void *value);
 extern J9_CFUNC jint  JNICALL unregisterNatives (JNIEnv *env, jclass clazz);
-extern J9_CFUNC void  JNICALL setStaticDoubleFieldIndirect (JNIEnv *env, jobject obj, jfieldID fieldID, void *value);
 extern J9_CFUNC struct J9Method*  findJNIMethod (J9VMThread* vmStruct, J9Class* clazz, char* name, char* signature);
 extern J9_CFUNC jfloat  JNICALL getStaticFloatField (JNIEnv *env, jclass clazz, jfieldID fieldID);
 extern J9_CFUNC void  JNICALL deleteLocalRef (JNIEnv *env, jobject localRef);
@@ -1215,6 +1212,7 @@ extern J9_CFUNC j9object_t resolveMethodTypeRefInto(J9VMThread *vmThread, J9Cons
 extern J9_CFUNC j9object_t resolveMethodHandleRef (J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA cpIndex, UDATA resolveFlags);
 extern J9_CFUNC j9object_t resolveMethodHandleRefInto(J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA cpIndex, UDATA resolveFlags, J9RAMMethodHandleRef *ramCPEntry);
 extern J9_CFUNC j9object_t resolveInvokeDynamic (J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA cpIndex, UDATA resolveFlags);
+extern J9_CFUNC j9object_t resolveConstantDynamic (J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA cpIndex, UDATA resolveFlags);
 #endif /* _J9VMRESOLVESUPPORT_ */
 
 /* J9VMRomImageSupport*/
@@ -1230,7 +1228,6 @@ extern J9_CFUNC UDATA  romImageLoad (J9VMThread *currentThread, void *segmentPoi
 /* J9VMStringSupport*/
 #ifndef _J9VMSTRINGSUPPORT_
 #define _J9VMSTRINGSUPPORT_
-extern J9_CFUNC void  copyUTF8ToUnicode (J9VMThread * vmThread, U_8 * data, UDATA length, UDATA stringFlags, j9object_t charArray, UDATA startIndex);
 extern J9_CFUNC j9object_t  catUtfToString4 (J9VMThread * vmThread, const U_8 *data1, UDATA length1, const U_8 *data2, UDATA length2, const U_8 *data3, UDATA length3, const U_8 *data4, UDATA length4);
 extern J9_CFUNC j9object_t  methodToString (J9VMThread * vmThread, J9Method* method);
 #endif /* _J9VMSTRINGSUPPORT_ */
@@ -1238,9 +1235,10 @@ extern J9_CFUNC j9object_t  methodToString (J9VMThread * vmThread, J9Method* met
 /* J9VMTasukiMonitor*/
 #ifndef _J9VMTASUKIMONITOR_
 #define _J9VMTASUKIMONITOR_
-extern J9_CFUNC IDATA  objectMonitorEnterBlocking (J9VMThread *currentThread);
-extern J9_CFUNC IDATA  objectMonitorEnterNonBlocking (J9VMThread *currentThread, j9object_t object);
-extern J9_CFUNC void  clearLockWord (J9VMThread *currentThread, j9objectmonitor_t *lockWord);
+extern J9_CFUNC UDATA  objectMonitorEnterBlocking (J9VMThread *currentThread);
+extern J9_CFUNC UDATA  objectMonitorEnterNonBlocking (J9VMThread *currentThread, j9object_t object);
+extern J9_CFUNC void  monitorExitWriteBarrier ();
+extern J9_CFUNC void  incrementCancelCounter (J9Class *clazz);
 #endif /* _J9VMTASUKIMONITOR_ */
 
 /* J9VMUTF8Support*/
@@ -1280,35 +1278,35 @@ extern J9_CFUNC UDATA  dropPendingSendPushes (J9VMThread *currentThread);
 /* J9VMJavaInterpreterStartup*/
 #ifndef _J9VMJAVAINTERPRETERSTARTUP_
 #define _J9VMJAVAINTERPRETERSTARTUP_
-extern J9_CFUNC void  JNICALL cleanUpAttachedThread (J9VMThread *vmContext, UDATA reserved1, UDATA reserved2, UDATA reserved3, UDATA reserved4);
-extern J9_CFUNC void  JNICALL handleUncaughtException (J9VMThread *vmContext, UDATA reserved1, UDATA reserved2, UDATA reserved3, UDATA reserved4);
-extern J9_CFUNC void  JNICALL sidecarInvokeReflectMethod (J9VMThread *vmContext, jobject methodRef, jobject recevierRef, jobjectArray argsRef, void *unused);
-extern J9_CFUNC void  JNICALL sidecarInvokeReflectMethodImpl (J9VMThread *vmContext, jobject methodRef, jobject recevierRef, jobjectArray argsRef, void *unused);
-extern J9_CFUNC void  JNICALL sendInit (J9VMThread *vmContext, j9object_t object, J9Class *senderClass, UDATA lookupOptions, UDATA reserved0);
-extern J9_CFUNC void  JNICALL printStackTrace (J9VMThread *vmContext, j9object_t exception, UDATA reserved1, UDATA reserved2, UDATA reserved3);
-extern J9_CFUNC void  JNICALL sendLoadClass (J9VMThread *vmContext, j9object_t classLoaderObject, j9object_t classNameObject, UDATA reserved1, UDATA reserved2);
-extern J9_CFUNC void  JNICALL runJavaThread (J9VMThread *vmContext, UDATA reserved1, UDATA reserved2, UDATA reserved3, UDATA reserved4);
-extern J9_CFUNC void  JNICALL sendCompleteInitialization (J9VMThread *vmContext, UDATA reserved1, UDATA reserved2, UDATA reserved3, UDATA reserved4);
-extern J9_CFUNC void  JNICALL sendClinit (J9VMThread *vmContext, J9Class *clazz, UDATA reserved1, UDATA reserved2, UDATA reserved3);
-extern J9_CFUNC void  JNICALL sendInitializationAlreadyFailed (J9VMThread *vmContext, J9Class *clazz, UDATA reserved1, UDATA reserved2, UDATA reserved3);
-extern J9_CFUNC void  JNICALL sendRecordInitializationFailure (J9VMThread *vmContext, J9Class *clazz, j9object_t throwable, UDATA reserved2, UDATA reserved3);
+extern J9_CFUNC void  JNICALL cleanUpAttachedThread (J9VMThread *vmContext);
+extern J9_CFUNC void  JNICALL handleUncaughtException (J9VMThread *vmContext);
+extern J9_CFUNC void  JNICALL sidecarInvokeReflectMethod (J9VMThread *vmContext, jobject methodRef, jobject recevierRef, jobjectArray argsRef);
+extern J9_CFUNC void  JNICALL sidecarInvokeReflectMethodImpl (J9VMThread *vmContext, jobject methodRef, jobject recevierRef, jobjectArray argsRef);
+extern J9_CFUNC void  JNICALL sendInit (J9VMThread *vmContext, j9object_t object, J9Class *senderClass, UDATA lookupOptions);
+extern J9_CFUNC void  JNICALL printStackTrace (J9VMThread *vmContext, j9object_t exception);
+extern J9_CFUNC void  JNICALL sendLoadClass (J9VMThread *vmContext, j9object_t classLoaderObject, j9object_t classNameObject);
+extern J9_CFUNC void  JNICALL runJavaThread (J9VMThread *vmContext);
+extern J9_CFUNC void  JNICALL sendCompleteInitialization (J9VMThread *vmContext);
+extern J9_CFUNC void  JNICALL sendClinit (J9VMThread *vmContext, J9Class *clazz);
+extern J9_CFUNC void  JNICALL sendInitializationAlreadyFailed (J9VMThread *vmContext, J9Class *clazz);
+extern J9_CFUNC void  JNICALL sendRecordInitializationFailure (J9VMThread *vmContext, J9Class *clazz, j9object_t throwable);
 extern J9_CFUNC void  JNICALL runCallInMethod (JNIEnv *env, jobject receiver, jclass clazz, jmethodID methodID, void* args);
 extern J9_CFUNC void  JNICALL internalSendExceptionConstructor (J9VMThread *vmContext, J9Class *exceptionClass, j9object_t exception, j9object_t detailMessage, UDATA constructorIndex);
-extern J9_CFUNC void  JNICALL sendInitCause (J9VMThread *vmContext, j9object_t receiver, j9object_t cause, UDATA reserved4, UDATA reserved5);
+extern J9_CFUNC void  JNICALL sendInitCause (J9VMThread *vmContext, j9object_t receiver, j9object_t cause);
 extern J9_CFUNC void  JNICALL initializeAttachedThread (J9VMThread *vmContext, const char *name, j9object_t *group, UDATA daemon, J9VMThread *initializee);
 extern J9_CFUNC void  JNICALL initializeAttachedThreadImpl (J9VMThread *vmContext, const char *name, j9object_t *group, UDATA daemon, J9VMThread *initializee);
 extern J9_CFUNC void  JNICALL runStaticMethod (J9VMThread *vmContext, U_8* className, J9NameAndSignature* selector, UDATA argCount, UDATA* arguments);
 extern J9_CFUNC void  JNICALL internalRunStaticMethod (J9VMThread *vmContext, J9Method *method, BOOLEAN returnsObject, UDATA argCount, UDATA* arguments);
-extern J9_CFUNC void  JNICALL sendCheckPackageAccess (J9VMThread *vmContext, J9Class * clazz, j9object_t protectionDomain, UDATA reserved1, UDATA reserved2);
-extern J9_CFUNC void  JNICALL sidecarInvokeReflectConstructor (J9VMThread *vmContext, jobject constructorRef, jobject recevierRef, jobjectArray argsRef, void *unused);
-extern J9_CFUNC void  JNICALL sidecarInvokeReflectConstructorImpl (J9VMThread *vmContext, jobject constructorRef, jobject recevierRef, jobjectArray argsRef, void *unused);
-extern J9_CFUNC void  JNICALL sendFromMethodDescriptorString (J9VMThread *vmThread, J9UTF8 *descriptor, J9ClassLoader *classLoader, UDATA reserved3, UDATA reserved4);
+extern J9_CFUNC void  JNICALL sendCheckPackageAccess (J9VMThread *vmContext, J9Class * clazz, j9object_t protectionDomain);
+extern J9_CFUNC void  JNICALL sidecarInvokeReflectConstructor (J9VMThread *vmContext, jobject constructorRef, jobject recevierRef, jobjectArray argsRef);
+extern J9_CFUNC void  JNICALL sidecarInvokeReflectConstructorImpl (J9VMThread *vmContext, jobject constructorRef, jobject recevierRef, jobjectArray argsRef);
+extern J9_CFUNC void  JNICALL sendFromMethodDescriptorString (J9VMThread *vmThread, J9UTF8 *descriptor, J9ClassLoader *classLoader, J9Class *appendArgType);
 extern J9_CFUNC void  JNICALL sendResolveMethodHandle (J9VMThread *vmThread, UDATA cpIndex, J9ConstantPool *ramCP, J9Class *definingClass, J9ROMNameAndSignature* nameAndSig);
-extern J9_CFUNC void  JNICALL sendForGenericInvoke (J9VMThread *vmThread, j9object_t methodHandle, j9object_t methodType, UDATA dropFirstArg, UDATA reserved4);
-extern J9_CFUNC void  JNICALL sendForGenericInvokeVarHandle (J9VMThread *vmThread, j9object_t methodHandle, j9object_t methodType, j9object_t varHandle, UDATA reserved4);
+extern J9_CFUNC void  JNICALL sendForGenericInvoke (J9VMThread *vmThread, j9object_t methodHandle, j9object_t methodType, UDATA dropFirstArg);
+extern J9_CFUNC void  JNICALL sendResolveConstantDynamic (J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA cpIndex, J9ROMNameAndSignature* nameAndSig, U_16* bsmData);
 extern J9_CFUNC void  JNICALL sendResolveInvokeDynamic (J9VMThread *vmThread, J9ConstantPool *ramCP, UDATA callSiteIndex, J9ROMNameAndSignature* nameAndSig, U_16* bsmData);
-extern J9_CFUNC void  JNICALL jitFillOSRBuffer (struct J9VMThread *vmContext, void *osrBlock, UDATA reserved1, UDATA reserved2, UDATA reserved3);
-extern J9_CFUNC void  JNICALL sendRunThread(J9VMThread *vmContext, j9object_t tenantContext, UDATA reserved1, UDATA reserved2, UDATA reserved3);
+extern J9_CFUNC void  JNICALL jitFillOSRBuffer (struct J9VMThread *vmContext, void *osrBlock);
+extern J9_CFUNC void  JNICALL sendRunThread(J9VMThread *vmContext, j9object_t tenantContext);
 #endif /* _J9VMJAVAINTERPRETERSTARTUP_ */
 
 /* J9VMNativeHelpersLarge*/
@@ -1339,359 +1337,6 @@ extern J9_CFUNC UDATA  jitSignalHandler (J9VMThread *vmStruct, U_32 gpType, void
 /* Runtime annotation handling */
 extern J9_CFUNC I_32 getAnnotationByType(J9ROMConstantPoolItem const *constantPool, J9UTF8 const *searchString,
 	U_32 const numAnnotations, U_8 const *data, U_8 const **pIndex,  U_8 const *dataEnd);
-/* ---------------- hookhelp.c ---------------- */
-
-#if (defined(J9VM_INTERP_DEBUG_SUPPORT)) 
-/**
-* @brief
-* @param currentThread
-* @param *method
-* @param location
-* @return UDATA
-*/
-UDATA  
-triggerBreakpointEvent(J9VMThread* currentThread, J9Method *method, IDATA location);
-#endif /* J9VM_INTERP_DEBUG_SUPPORT */
-
-
-#if (defined(J9VM_JIT_FULL_SPEED_DEBUG)) 
-/**
-* @brief
-* @param currentThread
-* @param result
-* @param fieldIndex
-* @param constantPool
-* @param resolvedField
-* @param isStatic
-* @param isStore
-* @return UDATA
-*/
-UDATA  
-triggerCheckForDataBreakpointEvent(J9VMThread* currentThread, UDATA result, UDATA fieldIndex, J9ConstantPool* constantPool, J9ROMFieldShape* resolvedField, UDATA isStatic, UDATA isStore);
-#endif /* J9VM_JIT_FULL_SPEED_DEBUG */
-
-
-/**
-* @brief
-* @param currentThread
-* @param clazz
-* @return void
-*/
-void  
-triggerClassLoadEvent(J9VMThread* currentThread, J9Class* clazz);
-
-
-/**
-* @brief
-* @param currentThread
-* @param exception
-* @param popProtectedFrame
-* @return J9Object*
-*/
-j9object_t  
-triggerExceptionCatchEvent(J9VMThread* currentThread, j9object_t exception, UDATA* popProtectedFrame);
-
-
-/**
-* @brief
-* @param currentThread
-* @return void
-*/
-void  
-triggerExceptionDescribeEvent(J9VMThread* currentThread);
-
-
-/**
-* @brief
-* @param currentThread
-* @param exception
-* @return J9Object*
-*/
-j9object_t  
-triggerExceptionThrowEvent(J9VMThread* currentThread, j9object_t exception);
-
-
-/**
-* @brief
-* @param currentThread
-* @param className
-* @param classNameLength
-* @param classPathEntries
-* @param entryCount
-* @param confirmedCount
-* @param partition
-* @param foundAtIndex
-* @return J9ROMClass*
-*/
-J9ROMClass*  
-triggerFindLocalClassEvent(J9VMThread* currentThread, J9ClassLoader* classloader, const char* className, UDATA classNameLength, J9ClassPathEntry* classPathEntries, UDATA entryCount, IDATA confirmedCount, const J9UTF8* partition, UDATA doPreventFind, UDATA doPreventStore, IDATA* foundAtIndex);
-
-
-/**
-* @brief
-* @param currentThread
-* @param pc
-* @param clazz
-* @return J9Method*
-*/
-J9Method*  
-triggerFindMethodFromPCEvent(J9VMThread* currentThread, U_8* pc, J9Class* clazz);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param poppedByException
-* @return void
-*/
-void  
-triggerFramePopEvent(J9VMThread* currentThread, J9Method* method, UDATA poppedByException);
-
-
-#if (defined(J9VM_INTERP_DEBUG_SUPPORT)) 
-/**
-* @brief
-* @param currentThread
-* @return void
-*/
-void  
-triggerFramePoppedEvent(J9VMThread* currentThread);
-#endif /* J9VM_INTERP_DEBUG_SUPPORT */
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param location
-* @param objectAddress
-* @param offset
-* @return void
-*/
-void  
-triggerGetFieldEvent(J9VMThread* currentThread, J9Method* method, IDATA location, j9object_t* objectAddress, UDATA offset);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param location
-* @param fieldAddress
-* @return void
-*/
-void  
-triggerGetStaticFieldEvent(J9VMThread* currentThread, J9Method* method, IDATA location, void* fieldAddress);
-
-
-/**
-* @brief
-* @param currentThread
-* @param clazz
-* @return UDATA
-*/
-UDATA  
-triggerInternalClassLoadEvent(J9VMThread* currentThread, J9Class* clazz);
-
-
-#if (defined(J9VM_OPT_JVMTI)) 
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param nativeMethodAddress
-* @return void *
-*/
-void *  
-triggerJNINativeNativeBindEvent(J9VMThread* currentThread, J9Method* method, void * nativeMethodAddress);
-#endif /* J9VM_OPT_JVMTI */
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param nativeMethodAddress
-* @return void
-*/
-void  
-triggerJNINativeNativeRegisteredEvent(J9VMThread* currentThread, J9Method* method, void * nativeMethodAddress);
-
-
-#if (defined(J9VM_OPT_JVMTI)) 
-/**
-* @brief
-* @param *currentThread
-* @param *nativeMethod
-* @param longINL
-* @param shortINL
-* @param longJNI
-* @param shortJNI
-* @param functionArgCount
-* @param callback
-* @return void
-*/
-void  
-triggerLookupNativeAddressEvent(J9VMThread *currentThread, J9Method *nativeMethod, char * longJNI, char * shortJNI, UDATA functionArgCount, lookupNativeAddressCallback callback);
-#endif /* J9VM_OPT_JVMTI */
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param arg0EA
-* @param methodType
-* @param tracing
-* @return void
-*/
-void  
-triggerMethodEnterEvent(J9VMThread* currentThread, J9Method* method, void* arg0EA, UDATA methodType, UDATA tracing);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param poppedByException
-* @param returnValuePtr
-* @param methodType
-* @param tracing
-* @return void
-*/
-void  
-triggerMethodReturnEvent(J9VMThread* currentThread, J9Method* method, UDATA poppedByException, void* returnValuePtr, UDATA methodType, UDATA tracing);
-
-
-/**
-* @brief
-* @param currentThread
-* @param monitor
-* @return void
-*/
-void  
-triggerMonitorContendedEnteredEvent(J9VMThread* currentThread, omrthread_monitor_t monitor);
-
-
-/**
-* @brief
-* @param currentThread
-* @param monitor
-* @return void
-*/
-void  
-triggerMonitorContendedEnterEvent(J9VMThread* currentThread, omrthread_monitor_t monitor);
-
-
-/**
-* @brief
-* @param currentThread
-* @param object
-* @param frame
-* @return void
-*/
-void  
-triggerMonitorEnterEvent(J9VMThread* currentThread, j9object_t object, UDATA* frame);
-
-
-/**
-* @brief
-* @param currentThread
-* @param object
-* @return void
-*/
-void  
-triggerMonitorExitEvent(J9VMThread* currentThread, j9object_t object);
-
-/**
-* @brief
-* @param currentThread
-* @param object
-* @return void
-*/
-void  
-triggerJniMonitorEnterEvent(J9VMThread *currentThread, j9object_t object);
-
-/**
-* @brief
-* @param currentThread
-* @param object
-* @return void
-*/
-void  
-triggerJniMonitorExitEvent(J9VMThread *currentThread, j9object_t object);
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param arg0EA
-* @param tracing
-* @return void
-*/
-void  
-triggerNativeMethodEnterEvent(J9VMThread* currentThread, J9Method* method, void* arg0EA, UDATA tracing);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param returnType
-* @param tracing
-* @return void
-*/
-void  
-triggerNativeMethodReturnEvent(J9VMThread* currentThread, J9Method* method, UDATA returnType, UDATA tracing);
-
-#if (defined(J9VM_INTERP_HOT_CODE_REPLACEMENT)) 
-/**
-* @brief
-* @param currentThread
-* @return UDATA
-*/
-UDATA  
-triggerPopFramesInterruptEvent(J9VMThread* currentThread);
-#endif /* J9VM_INTERP_HOT_CODE_REPLACEMENT */
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param location
-* @param objectAddress
-* @param offset
-* @param valueAddress
-* @return void
-*/
-void  
-triggerPutFieldEvent(J9VMThread* currentThread, J9Method* method, IDATA location, j9object_t* objectAddress, UDATA offset, void* valueAddress);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param location
-* @param fieldAddress
-* @param valueAddress
-* @return void
-*/
-void  
-triggerPutStaticFieldEvent(J9VMThread* currentThread, J9Method* method, IDATA location, void* fieldAddress, void* valueAddress);
-
-
-/**
-* @brief
-* @param currentThread
-* @param method
-* @param location
-* @return void
-*/
-void  
-triggerSingleStepEvent(J9VMThread* currentThread, J9Method * method, IDATA location);
-
 
 #ifdef __cplusplus
 }

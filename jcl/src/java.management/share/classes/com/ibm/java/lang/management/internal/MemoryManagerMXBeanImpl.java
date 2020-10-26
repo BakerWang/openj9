@@ -1,6 +1,6 @@
 /*[INCLUDE-IF Sidecar17]*/
 /*******************************************************************************
- * Copyright (c) 2005, 2016 IBM Corp. and others
+ * Copyright (c) 2005, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +18,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package com.ibm.java.lang.management.internal;
 
@@ -33,13 +33,15 @@ import javax.management.ObjectName;
  * Runtime type for {@link MemoryManagerMXBean}.
  * <p>
  * There is only ever one instance of this class in a virtual machine.
- * The type does not need to be modeled as a DynamicMBean, as it is structured 
+ * The type does not need to be modeled as a DynamicMBean, as it is structured
  * statically, without attributes, operations, notifications, etc., configured,
- * on the fly. The StandardMBean model is sufficient for the bean type.  
+ * on the fly. The StandardMBean model is sufficient for the bean type.
  * </p>
  * @since 1.5
  */
 public class MemoryManagerMXBeanImpl implements MemoryManagerMXBean {
+
+	private final String domainName;
 
 	private final String name;
 
@@ -50,27 +52,26 @@ public class MemoryManagerMXBeanImpl implements MemoryManagerMXBean {
 
 	private final List<MemoryPoolMXBean> managedPoolList;
 
-	private final ObjectName objectName;
+	private ObjectName objectName;
 
 	/**
-	 * Sets the metadata for this bean. 
-	 * @param objectName
-	 * @param name 
+	 * Sets the metadata for this bean.
+	 * @param domainName
+	 * @param name
 	 * @param id
-	 * @param memBean 
 	 */
-	MemoryManagerMXBeanImpl(ObjectName objectName, String name, int id, MemoryMXBeanImpl memBean) {
+	MemoryManagerMXBeanImpl(String domainName, String name, int id) {
 		super();
-		this.objectName = objectName;
+		this.domainName = domainName;
 		this.name = name;
 		this.id = id;
 		this.managedPoolList = new LinkedList<>();
 	}
-    
-    /**
-     * add managed pool for this bean 
-     * @param poolBean	managed pool bean
-     */
+
+	/**
+	 * add managed pool for this bean
+	 * @param poolBean managed pool bean
+	 */
 	protected void addMemoryPool(MemoryPoolMXBean poolBean) {
 		managedPoolList.add(poolBean);
 	}
@@ -83,12 +84,12 @@ public class MemoryManagerMXBeanImpl implements MemoryManagerMXBean {
 
 	/**
 	 * Retrieves the list of memory pool beans managed by this manager.
-	 * 
+	 *
 	 * @return the list of <code>MemoryPoolMXBean</code> instances
 	 */
 	List<MemoryPoolMXBean> getMemoryPoolMXBeans() {
-        return managedPoolList;
-    }
+		return managedPoolList;
+	}
 
 	/**
 	 * {@inheritDoc}
@@ -124,6 +125,9 @@ public class MemoryManagerMXBeanImpl implements MemoryManagerMXBean {
 	 */
 	@Override
 	public ObjectName getObjectName() {
+		if (objectName == null) {
+			objectName = ManagementUtils.createObjectName(domainName, name);
+		}
 		return objectName;
 	}
 

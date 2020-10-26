@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 1991, 2017 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -17,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 #include "j9.h"
@@ -97,7 +97,7 @@ computeArgsCRC(const jvalue *args, jmethodID methodID)
 	ramMethod = ((J9JNIMethodID*)methodID)->method;
 	methodClass = J9_CLASS_FROM_METHOD(ramMethod);
 	romMethod = J9_ROM_METHOD_FROM_RAM_METHOD(ramMethod);
-	sig = J9ROMMETHOD_GET_SIGNATURE(methodClass->romClass, romMethod);
+	sig = J9ROMMETHOD_SIGNATURE(romMethod);
 
 	/* count the args */
 	length = 0;

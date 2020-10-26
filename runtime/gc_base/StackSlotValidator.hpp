@@ -1,6 +1,5 @@
-
 /*******************************************************************************
- * Copyright (c) 1991, 2014 IBM Corp. and others
+ * Copyright (c) 1991, 2019 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,7 +17,7 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 
 /**
@@ -120,7 +119,7 @@ public:
 		} else if ( !onHeap && (0 != ((UDATA)_slotValue & (sizeof(UDATA) - 1)))) {
 			reportStackSlot(env, "Misaligned stack-allocated object"); /* stack allocated objects might only be pointer aligned, not necessarily 8-aligned */
 			result = false;
-		} else if (!couldBeForwarded && ((UDATA)0x99669966 != J9GC_J9OBJECT_CLAZZ(_slotValue)->eyecatcher)) {
+		} else if (!couldBeForwarded && ((UDATA)0x99669966 != J9GC_J9OBJECT_CLAZZ(_slotValue, env)->eyecatcher)) {
 			reportStackSlot(env, !onHeap ? "Invalid class pointer in stack allocated object" : "Invalid class pointer");
 			result = false;
 		} else if (fakeError) {

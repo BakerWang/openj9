@@ -1,6 +1,6 @@
-/*[INCLUDE-IF Sidecar17]*/
+/*[INCLUDE-IF Sidecar17 & !OPENJDK_METHODHANDLES]*/
 /*******************************************************************************
- * Copyright (c) 2009, 2009 IBM Corp. and others
+ * Copyright (c) 2009, 2020 IBM Corp. and others
  *
  * This program and the accompanying materials are made available under
  * the terms of the Eclipse Public License 2.0 which accompanies this
@@ -18,11 +18,15 @@
  * [1] https://www.gnu.org/software/classpath/license.html
  * [2] http://openjdk.java.net/legal/assembly-exception.html
  *
- * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
+ * SPDX-License-Identifier: EPL-2.0 OR Apache-2.0 OR GPL-2.0 WITH Classpath-exception-2.0 OR LicenseRef-GPL-2.0 WITH Assembly-exception
  *******************************************************************************/
 package java.lang.invoke;
 
 import static java.lang.invoke.MethodType.*;
+
+/*[IF Java15]*/
+import java.util.List;
+/*[ENDIF] Java15 */
 
 /*
  * MethodHandle subclass responsible for dealing with constant values.
@@ -124,6 +128,13 @@ abstract class ConstantHandle extends MethodHandle {
 			return new ConstantIntHandle(methodType, value);
 		}
 	}
+	
+/*[IF Java15]*/
+	@Override
+	boolean addRelatedMHs(List<MethodHandle> relatedMHs) {
+		return false;
+	}
+/*[ENDIF] Java15 */
 }
 
 final class ConstantObjectHandle extends ConstantHandle {
